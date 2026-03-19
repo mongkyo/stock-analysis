@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}대시보드{% endblock %}
+{% block page_title %}대시보드{% endblock %}
+
+{% block content %}
+
+<!-- 요약 카드 -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-8">
+  <!-- 분석 기간 -->
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 px-6 py-5">
+    <div class="text-xs text-gray-500 mb-1">최근 분석 기간</div>
+    {% if summary %}
+    <div class="text-lg font-bold text-gray-800">{{ summary.start_date }} ~ {{ summary.end_date }}</div>
+    {% else %}
+    <div class="text-gray-400 text-sm">분석 결과 없음</div>
+    {% endif %}
+  </div>
+
+  <!-- Top1 종목 -->
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 px-6 py-5">
+    <div class="text-xs text-gray-500 mb-1">통합 1위 종목</div>
+    {% if summary.top1 %}
+    <div class="text-lg font-bold text-gray-800">{{ summary.top1.name }}</div>
+    <div class="text-sm text-green-600 font-semibold mt-0.5">+{{ "%.1f"|format(summary.top1.growth_rate) }}%</div>
+    {% else %}
+    <div class="text-gray-400 text-sm">없음</div>
+    {% endif %}
+  </div>
+
+  <!-- 골든크로스 신호 수 -->
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 px-6 py-5">
+    <div class="text-xs text-gray-500 mb-1">오늘 골든크로스 신호</div>
+    <div class="text-lg font-bold text-blue-600">{{ signals|length }}건</div>
+  </div>
+</div>
+
+<!-- Top5 + 골든크로스 -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+  <!-- Top5 테이블 -->
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <h2 class="font-semibold text-gray-800">통합 Top 5</h2>
+      <a href="/analysis" class="text-xs text-blue-600 hover:underline">전체 보기 →</a>
+    </div>
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-gray-500 text-xs">
+        <tr>
+          <th class="px-4 py-3 text-left">순위</th>
+          <th class="px-4 py-3 text-left">종목명</th>
+          <th class="px-4 py-3 text-right">수익률</th>
+          <th class="px-4 py-3 text-right">ROE</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-50">
+        {% for r in top5 %}
+        <tr class="hover:bg-gray-50">
+          <td class="px-4 py-3 font-medium text-gray-600">{{ r.rank }}</td>
+          <td class="px-4 py-3">
+            <div class="font-medium">{{ r.name }}</div>
+            <div class="text-xs text-gray-400">{{ r.code }}</div>
+          </td>
+          <td class="px-4 py-3 text-right font-semibold
+            {% if r.growth_rate >= 0 %}text-red-500{% else %}text-blue-500{% endif %}">
+            {{ "+%.1f"|format(r.growth_rate) if r.growth_rate >= 0 else "%.1f"|format(r.growth_rate) }}%
+          </td>
+          <td class="px-4 py-3 text-right text-gray-600">
+            {% if r.roe is not none %}{{ "%.1f"|format(r.roe) }}%{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="px-4 py-6 text-center text-gray-400 text-sm">분석 결과가 없습니다</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 골든크로스 신호 -->
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <h2 class="font-semibold text-gray-800">⚡ 오늘 골든크로스 신호</h2>
+      <span class="text-xs text-gray-400">MA3 / MA5 상향돌파</span>
+    </div>
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-gray-500 text-xs">
+        <tr>
+          <th class="px-4 py-3 text-left">종목명</th>
+          <th class="px-4 py-3 text-right">현재가</th>
+          <th class="px-4 py-3 text-right">MA3</th>
+          <th class="px-4 py-3 text-right">MA5</th>
+          <th class="px-4 py-3 text-right">감지시각</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-50">
+        {% for s in signals %}
+        <tr class="hover:bg-gray-50">
+          <td class="px-4 py-3">
+            <div class="font-medium">{{ s.name }}</div>
+            <div class="text-xs text-gray-400">{{ s.code }}</div>
+          </td>
+          <td class="px-4 py-3 text-right font-semibold text-red-500">
+            {{ "{:,.0f}".format(s.close) }}
+          </td>
+          <td class="px-4 py-3 text-right text-gray-600">{{ "{:,.0f}".format(s.ma3) }}</td>
+          <td class="px-4 py-3 text-right text-gray-600">{{ "{:,.0f}".format(s.ma5) }}</td>
+          <td class="px-4 py-3 text-right text-xs text-gray-400">
+            {{ s.detected_at.strftime('%H:%M') }}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="px-4 py-6 text-center text-gray-400 text-sm">오늘 신호 없음</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+{% endblock %}

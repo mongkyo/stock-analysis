@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>주식 분석 플랫폼 — UI 목업</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { brand: { 50:'#eff6ff', 500:'#3b82f6', 600:'#2563eb', 700:'#1d4ed8' } }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+
+<!-- ── 네비게이션 ── -->
+<nav class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shadow-sm">
+  <div class="flex items-center gap-8">
+    <span class="font-bold text-lg text-blue-700">📈 StockPlatform</span>
+    <div class="flex gap-6 text-sm font-medium text-gray-600">
+      <a href="#dashboard" class="text-blue-600 border-b-2 border-blue-600 pb-1">대시보드</a>
+      <a href="#top100"    class="hover:text-blue-600">Top100</a>
+      <a href="#watchlist" class="hover:text-blue-600">관심종목</a>
+      <a href="#golden"    class="hover:text-blue-600">골든크로스</a>
+      <a href="#reports"   class="hover:text-blue-600">리포트</a>
+    </div>
+  </div>
+  <div class="flex items-center gap-3 text-sm">
+    <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-semibold">Admin</span>
+    <span class="text-gray-600">관리자</span>
+    <button class="text-gray-400 hover:text-red-500 text-xs">로그아웃</button>
+  </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+
+  <!-- ── 기간 선택 바 ── -->
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 px-6 py-4 flex items-center gap-4 flex-wrap">
+    <span class="text-sm font-semibold text-gray-700">📅 분석 기간</span>
+
+    <!-- 빠른 선택 버튼 -->
+    <div class="flex gap-1 text-xs" id="quickBtns">
+      <button onclick="setQuick('month')"  class="quick-btn px-3 py-1.5 bg-blue-600 text-white rounded-md">당월</button>
+      <button onclick="setQuick('1m')"     class="quick-btn px-3 py-1.5 bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200">1개월</button>
+      <button onclick="setQuick('3m')"     class="quick-btn px-3 py-1.5 bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200">3개월</button>
+      <button onclick="setQuick('6m')"     class="quick-btn px-3 py-1.5 bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200">6개월</button>
+      <button onclick="setQuick('year')"   class="quick-btn px-3 py-1.5 bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200">올해</button>
+      <button onclick="setQuick('custom')" class="quick-btn px-3 py-1.5 bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200">직접 입력</button>
+    </div>
+
+    <!-- 날짜 직접 입력 (직접 입력 선택 시 표시) -->
+    <div id="customRange" class="hidden flex items-center gap-2">
+      <input type="date" id="startDate" class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-400" />
+      <span class="text-gray-400 text-sm">~</span>
+      <input type="date" id="endDate"   class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-400" />
+    </div>
+
+    <button onclick="runAnalysis()"
+      class="ml-auto flex items-center gap-1.5 bg-blue-600 text-white text-sm px-4 py-1.5 rounded-lg hover:bg-blue-700 font-semibold transition-colors">
+      🔍 분석 실행
+    </button>
+
+    <div id="periodLabel" class="text-xs text-gray-400 ml-2">현재: <span id="periodText" class="font-semibold text-blue-600">2026.03.01 ~ 03.19</span></div>
+  </div>
+
+  <!-- ── 요약 카드 ── -->
+  <div id="dashboard" class="grid grid-cols-4 gap-4">
+    <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+      <p class="text-xs text-gray-400 mb-1">분석 기간</p>
+      <p id="cardPeriod" class="text-base font-bold text-gray-800">2026.03.01 ~ 03.19</p>
+      <p class="text-xs text-gray-400 mt-1">당월 누적</p>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+      <p class="text-xs text-gray-400 mb-1">통합 Top100 최고 수익률</p>
+      <p class="text-2xl font-bold text-green-500">+47.3%</p>
+      <p class="text-xs text-gray-500 mt-1">에코앤드림 (코스닥)</p>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+      <p class="text-xs text-gray-400 mb-1">재진입 포착</p>
+      <p class="text-2xl font-bold text-blue-600">8<span class="text-sm font-normal text-gray-400"> 종목</span></p>
+      <p class="text-xs text-gray-500 mt-1">이전 51~100위 → 재진입</p>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+      <p class="text-xs text-gray-400 mb-1">오늘 골든크로스 신호</p>
+      <p class="text-2xl font-bold text-orange-500">3<span class="text-sm font-normal text-gray-400"> 종목</span></p>
+      <p class="text-xs text-gray-500 mt-1">관심종목 중 MA3↑MA5</p>
+    </div>
+  </div>
+
+  <!-- ── Top100 테이블 ── -->
+  <div id="top100" class="bg-white rounded-xl shadow-sm border border-gray-100">
+    <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <h2 class="font-bold text-gray-800">📊 통합 Top100</h2>
+      <div class="flex gap-2 items-center">
+        <div class="flex gap-1 text-xs">
+          <button class="px-3 py-1 bg-blue-600 text-white rounded-md">전체</button>
+          <button class="px-3 py-1 bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200">코스피</button>
+          <button class="px-3 py-1 bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200">코스닥</button>
+        </div>
+        <a href="#" class="flex items-center gap-1 text-xs bg-green-600 text-white px-3 py-1 rounded-md hover:bg-green-700">
+          ⬇ 엑셀 다운로드
+        </a>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-500 uppercase">
+          <tr>
+            <th class="px-4 py-3 text-left w-8">#</th>
+            <th class="px-4 py-3 text-left">종목코드</th>
+            <th class="px-4 py-3 text-left">종목명</th>
+            <th class="px-4 py-3 text-left">시장</th>
+            <th class="px-4 py-3 text-right">시작가</th>
+            <th class="px-4 py-3 text-right">종료가</th>
+            <th class="px-4 py-3 text-right">수익률</th>
+            <th class="px-4 py-3 text-right">ROE</th>
+            <th class="px-4 py-3 text-right">영업이익률</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          <!-- 행 데이터 -->
+          <tr class="hover:bg-blue-50 transition-colors">
+            <td class="px-4 py-3 text-gray-400 font-medium">1</td>
+            <td class="px-4 py-3 text-gray-500 font-mono text-xs">238120</td>
+            <td class="px-4 py-3 font-semibold text-gray-800">에코앤드림</td>
+            <td class="px-4 py-3"><span class="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">코스닥</span></td>
+            <td class="px-4 py-3 text-right text-gray-600">12,400</td>
+            <td class="px-4 py-3 text-right text-gray-800 font-medium">18,270</td>
+            <td class="px-4 py-3 text-right font-bold text-green-600">+47.34%</td>
+            <td class="px-4 py-3 text-right text-gray-600">18.2</td>
+            <td class="px-4 py-3 text-right text-gray-600">12.4</td>
+          </tr>
+          <tr class="hover:bg-blue-50 transition-colors">
+            <td class="px-4 py-3 text-gray-400 font-medium">2</td>
+            <td class="px-4 py-3 text-gray-500 font-mono text-xs">014820</td>
+            <td class="px-4 py-3 font-semibold text-gray-800">동원시스템즈</td>
+            <td class="px-4 py-3"><span class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">코스피</span></td>
+            <td class="px-4 py-3 text-right text-gray-600">38,500</td>
+            <td class="px-4 py-3 text-right text-gray-800 font-medium">55,200</td>
+            <td class="px-4 py-3 text-right font-bold text-green-600">+43.38%</td>
+            <td class="px-4 py-3 text-right text-gray-600">22.7</td>
+            <td class="px-4 py-3 text-right text-gray-600">8.9</td>
+          </tr>
+          <tr class="hover:bg-blue-50 transition-colors">
+            <td class="px-4 py-3 text-gray-400 font-medium">3</td>
+            <td class="px-4 py-3 text-gray-500 font-mono text-xs">012450</td>
+            <td class="px-4 py-3 font-semibold text-gray-800">한화에어로스페이스</td>
+            <td class="px-4 py-3"><span class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">코스피</span></td>
+            <td class="px-4 py-3 text-right text-gray-600">241,000</td>
+            <td class="px-4 py-3 text-right text-gray-800 font-medium">338,500</td>
+            <td class="px-4 py-3 text-right font-bold text-green-600">+40.46%</td>
+            <td class="px-4 py-3 text-right text-gray-600">31.5</td>
+            <td class="px-4 py-3 text-right text-gray-600">15.2</td>
+          </tr>
+          <tr class="hover:bg-blue-50 transition-colors">
+            <td class="px-4 py-3 text-gray-400 font-medium">4</td>
+            <td class="px-4 py-3 text-gray-500 font-mono text-xs">035900</td>
+            <td class="px-4 py-3 font-semibold text-gray-800">JYP Ent.</td>
+            <td class="px-4 py-3"><span class="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">코스닥</span></td>
+            <td class="px-4 py-3 text-right text-gray-600">52,300</td>
+            <td class="px-4 py-3 text-right text-gray-800 font-medium">71,800</td>
+            <td class="px-4 py-3 text-right font-bold text-green-600">+37.28%</td>
+            <td class="px-4 py-3 text-right text-gray-600">24.1</td>
+            <td class="px-4 py-3 text-right text-gray-600">21.7</td>
+          </tr>
+          <tr class="hover:bg-blue-50 transition-colors">
+            <td class="px-4 py-3 text-gray-400 font-medium">5</td>
+            <td class="px-4 py-3 text-gray-500 font-mono text-xs">000270</td>
+            <td class="px-4 py-3 font-semibold text-gray-800">기아</td>
+            <td class="px-4 py-3"><span class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">코스피</span></td>
+            <td class="px-4 py-3 text-right text-gray-600">87,200</td>
+            <td class="px-4 py-3 text-right text-gray-800 font-medium">116,400</td>
+            <td class="px-4 py-3 text-right font-bold text-green-600">+33.49%</td>
+            <td class="px-4 py-3 text-right text-gray-600">19.8</td>
+            <td class="px-4 py-3 text-right text-gray-600">10.3</td>
+          </tr>
+          <tr class="text-gray-300 text-center">
+            <td colspan="9" class="py-2 text-xs">· · · 95개 더 · · ·</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── 하단 2열 ── -->
+  <div class="grid grid-cols-2 gap-6">
+
+    <!-- 관심종목 -->
+    <div id="watchlist" class="bg-white rounded-xl shadow-sm border border-gray-100">
+      <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h2 class="font-bold text-gray-800">⭐ 관심종목</h2>
+        <button class="text-xs bg-blue-600 text-white px-3 py-1 rounded-md hover:bg-blue-700">+ 추가</button>
+      </div>
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-500">
+          <tr>
+            <th class="px-4 py-2 text-left">종목명</th>
+            <th class="px-4 py-2 text-right">현재가</th>
+            <th class="px-4 py-2 text-right">수익률</th>
+            <th class="px-4 py-2 text-center">신호</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          <tr class="hover:bg-gray-50">
+            <td class="px-4 py-3">
+              <p class="font-semibold">삼성전자</p>
+              <p class="text-xs text-gray-400">005930</p>
+            </td>
+            <td class="px-4 py-3 text-right font-medium">200,500</td>
+            <td class="px-4 py-3 text-right text-green-600 font-semibold">+2.77%</td>
+            <td class="px-4 py-3 text-center">
+              <span class="text-xs bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full">대기</span>
+            </td>
+          </tr>
+          <tr class="hover:bg-gray-50">
+            <td class="px-4 py-3">
+              <p class="font-semibold">SK하이닉스</p>
+              <p class="text-xs text-gray-400">000660</p>
+            </td>
+            <td class="px-4 py-3 text-right font-medium">1,013,000</td>
+            <td class="px-4 py-3 text-right text-green-600 font-semibold">+7.88%</td>
+            <td class="px-4 py-3 text-center">
+              <span class="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-semibold">🚨 신호</span>
+            </td>
+          </tr>
+          <tr class="hover:bg-gray-50">
+            <td class="px-4 py-3">
+              <p class="font-semibold">한화에어로스페이스</p>
+              <p class="text-xs text-gray-400">012450</p>
+            </td>
+            <td class="px-4 py-3 text-right font-medium">338,500</td>
+            <td class="px-4 py-3 text-right text-green-600 font-semibold">+40.46%</td>
+            <td class="px-4 py-3 text-center">
+              <span class="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-semibold">🚨 신호</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 리포트 다운로드 + 골든크로스 -->
+    <div class="space-y-4">
+
+      <!-- 골든크로스 -->
+      <div id="golden" class="bg-white rounded-xl shadow-sm border border-gray-100">
+        <div class="px-6 py-4 border-b border-gray-100">
+          <h2 class="font-bold text-gray-800">🚨 오늘 골든크로스 신호</h2>
+        </div>
+        <div class="divide-y divide-gray-50">
+          <div class="px-6 py-3 flex items-center justify-between hover:bg-orange-50">
+            <div>
+              <p class="font-semibold text-sm">SK하이닉스 <span class="text-xs text-gray-400 font-normal">000660</span></p>
+              <p class="text-xs text-gray-400">14:00 | 종가 1,013,000원 | MA3 1,008,500 / MA5 1,005,200</p>
+            </div>
+            <span class="text-xs text-orange-500 font-semibold">MA3↑MA5</span>
+          </div>
+          <div class="px-6 py-3 flex items-center justify-between hover:bg-orange-50">
+            <div>
+              <p class="font-semibold text-sm">한화에어로스페이스 <span class="text-xs text-gray-400 font-normal">012450</span></p>
+              <p class="text-xs text-gray-400">13:30 | 종가 338,500원 | MA3 336,200 / MA5 334,800</p>
+            </div>
+            <span class="text-xs text-orange-500 font-semibold">MA3↑MA5</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 리포트 다운로드 -->
+      <div id="reports" class="bg-white rounded-xl shadow-sm border border-gray-100">
+        <div class="px-6 py-4 border-b border-gray-100">
+          <h2 class="font-bold text-gray-800">📎 리포트 다운로드</h2>
+        </div>
+        <div class="p-4 space-y-2">
+          <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-blue-50 cursor-pointer transition-colors">
+            <div>
+              <p class="text-sm font-medium">report_20260301_20260319.xlsx</p>
+              <p class="text-xs text-gray-400">2026-03-19 21:00 생성</p>
+            </div>
+            <div class="flex gap-2">
+              <a href="#" class="text-xs bg-green-600 text-white px-3 py-1.5 rounded-md hover:bg-green-700">⬇ 다운로드</a>
+              <a href="#" class="text-xs bg-blue-100 text-blue-600 px-3 py-1.5 rounded-md hover:bg-blue-200">카카오 전송</a>
+            </div>
+          </div>
+          <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-blue-50 cursor-pointer transition-colors">
+            <div>
+              <p class="text-sm font-medium">report_20260201_20260228.xlsx</p>
+              <p class="text-xs text-gray-400">2026-02-28 21:00 생성</p>
+            </div>
+            <div class="flex gap-2">
+              <a href="#" class="text-xs bg-green-600 text-white px-3 py-1.5 rounded-md hover:bg-green-700">⬇ 다운로드</a>
+              <a href="#" class="text-xs bg-blue-100 text-blue-600 px-3 py-1.5 rounded-md hover:bg-blue-200">카카오 전송</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ── 로그인 화면 (하단 참고용) ── -->
+<div class="max-w-7xl mx-auto px-6 pb-8">
+  <p class="text-xs text-gray-400 mb-4 font-semibold uppercase tracking-wider">── 로그인 화면 참고 ──</p>
+  <div class="flex gap-6">
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-8 w-80">
+      <div class="text-center mb-6">
+        <p class="text-2xl mb-1">📈</p>
+        <h1 class="text-xl font-bold text-gray-800">StockPlatform</h1>
+        <p class="text-sm text-gray-400 mt-1">주식 분석 플랫폼</p>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs text-gray-500 font-medium">아이디</label>
+          <input type="text" placeholder="이메일 또는 아이디"
+            class="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-400" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 font-medium">비밀번호</label>
+          <input type="password" placeholder="비밀번호"
+            class="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-400" />
+        </div>
+        <button class="w-full bg-blue-600 text-white rounded-lg py-2 text-sm font-semibold hover:bg-blue-700 transition-colors">
+          로그인
+        </button>
+      </div>
+      <div class="mt-4 flex gap-2 text-xs text-center">
+        <div class="flex-1 bg-gray-50 rounded-lg py-2 text-gray-500">
+          <p class="font-semibold text-blue-600">Admin</p>
+          <p>전체 기능</p>
+        </div>
+        <div class="flex-1 bg-gray-50 rounded-lg py-2 text-gray-500">
+          <p class="font-semibold text-green-600">Premium</p>
+          <p>분석 + 리포트</p>
+        </div>
+        <div class="flex-1 bg-gray-50 rounded-lg py-2 text-gray-500">
+          <p class="font-semibold text-orange-600">Basic</p>
+          <p>대시보드만</p>
+        </div>
+      </div>
+    </div>
+    <div class="bg-gray-100 rounded-xl border border-gray-200 p-6 flex-1 flex items-center justify-center text-gray-400 text-sm">
+      실제 구현 시 Tailwind 테마 색상, 로고, 레이아웃 조정 가능
+    </div>
+  </div>
+</div>
+
+<script>
+  const today = new Date();
+  const fmt = d => d.toISOString().slice(0,10);
+  const fmtKr = d => `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+
+  function setQuick(type) {
+    const end = new Date(today);
+    let start = new Date(today);
+
+    if (type === 'month')  { start = new Date(today.getFullYear(), today.getMonth(), 1); }
+    else if (type === '1m'){ start.setMonth(start.getMonth() - 1); }
+    else if (type === '3m'){ start.setMonth(start.getMonth() - 3); }
+    else if (type === '6m'){ start.setMonth(start.getMonth() - 6); }
+    else if (type === 'year'){ start = new Date(today.getFullYear(), 0, 1); }
+    else if (type === 'custom'){
+      document.getElementById('customRange').classList.toggle('hidden');
+      return;
+    }
+
+    document.getElementById('customRange').classList.add('hidden');
+    document.getElementById('startDate').value = fmt(start);
+    document.getElementById('endDate').value   = fmt(end);
+    updateLabel(fmtKr(start), fmtKr(end));
+
+    // 버튼 스타일 업데이트
+    document.querySelectorAll('.quick-btn').forEach(b => {
+      b.className = 'quick-btn px-3 py-1.5 bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200 text-xs';
+    });
+    event.target.className = 'quick-btn px-3 py-1.5 bg-blue-600 text-white rounded-md text-xs';
+  }
+
+  function updateLabel(s, e) {
+    document.getElementById('periodText').textContent = `${s} ~ ${e}`;
+    document.getElementById('cardPeriod').textContent = `${s} ~ ${e}`;
+  }
+
+  function runAnalysis() {
+    const s = document.getElementById('startDate').value;
+    const e = document.getElementById('endDate').value;
+    if (!s || !e) { alert('기간을 먼저 선택해주세요.'); return; }
+    const btn = event.target;
+    btn.textContent = '⏳ 분석 중...';
+    btn.disabled = true;
+    btn.classList.replace('bg-blue-600','bg-gray-400');
+    setTimeout(() => {
+      updateLabel(s.replace(/-/g,'.'), e.replace(/-/g,'.'));
+      btn.textContent = '✅ 완료!';
+      btn.classList.replace('bg-gray-400','bg-green-600');
+      setTimeout(() => {
+        btn.textContent = '🔍 분석 실행';
+        btn.disabled = false;
+        btn.classList.replace('bg-green-600','bg-blue-600');
+      }, 1500);
+    }, 1800);
+  }
+
+  // 초기값 세팅
+  document.getElementById('startDate').value = fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+  document.getElementById('endDate').value   = fmt(today);
+</script>
+</body>
+</html>

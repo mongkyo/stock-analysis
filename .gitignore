@@ -1,0 +1,25 @@
+# 환경 변수 (API 키 포함)
+.env
+
+# Python 캐시
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 분석 결과 파일
+data/*.csv
+data/*.xlsx
+
+# 가상환경
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Claude Code 로컬 설정
+.claude/

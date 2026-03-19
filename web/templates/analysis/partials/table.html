@@ -1,0 +1,68 @@
+<!-- HTMX 부분 렌더링: Top100 테이블 -->
+
+{% if run_msg %}
+<div class="px-6 py-3 bg-green-50 border-b border-green-100 flex items-center justify-between">
+  <span class="text-sm text-green-700 font-medium">✅ {{ run_msg }}</span>
+  {% if excel_name %}
+  <a href="/reports/download/{{ excel_name }}"
+     class="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition">
+    ⬇ 엑셀 다운로드
+  </a>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+  <h2 class="font-semibold text-gray-800">
+    {{ market }} Top100 &nbsp;
+    <span class="text-sm font-normal text-gray-500">{{ start }} ~ {{ end }}</span>
+  </h2>
+  <div class="flex items-center gap-3">
+    <span class="text-xs text-gray-400">총 {{ results|length }}건</span>
+    {% if results and not run_msg %}
+    <a href="/reports" class="text-xs text-blue-600 hover:underline">리포트 목록 →</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 text-gray-500 text-xs sticky top-0">
+      <tr>
+        <th class="px-4 py-3 text-right w-12">순위</th>
+        <th class="px-4 py-3 text-left">종목명</th>
+        <th class="px-4 py-3 text-left">코드</th>
+        <th class="px-4 py-3 text-right">시작가</th>
+        <th class="px-4 py-3 text-right">종료가</th>
+        <th class="px-4 py-3 text-right">수익률</th>
+        <th class="px-4 py-3 text-right">ROE</th>
+        <th class="px-4 py-3 text-right">영업이익률</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-50">
+      {% for r in results %}
+      <tr class="hover:bg-blue-50 transition-colors">
+        <td class="px-4 py-3 text-right text-gray-500 font-medium">{{ r.rank }}</td>
+        <td class="px-4 py-3 font-medium">{{ r.name }}</td>
+        <td class="px-4 py-3 text-gray-400">{{ r.code }}</td>
+        <td class="px-4 py-3 text-right text-gray-600">{{ "{:,}".format(r.start_price) }}</td>
+        <td class="px-4 py-3 text-right text-gray-600">{{ "{:,}".format(r.end_price) }}</td>
+        <td class="px-4 py-3 text-right font-semibold
+          {% if r.growth_rate >= 0 %}text-red-500{% else %}text-blue-500{% endif %}">
+          {{ "+%.2f"|format(r.growth_rate) if r.growth_rate >= 0 else "%.2f"|format(r.growth_rate) }}%
+        </td>
+        <td class="px-4 py-3 text-right text-gray-600">
+          {% if r.roe is not none %}{{ "%.1f"|format(r.roe) }}%{% else %}—{% endif %}
+        </td>
+        <td class="px-4 py-3 text-right text-gray-600">
+          {% if r.op_margin is not none %}{{ "%.1f"|format(r.op_margin) }}%{% else %}—{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="8" class="px-4 py-10 text-center text-gray-400">해당 기간의 분석 데이터가 없습니다</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

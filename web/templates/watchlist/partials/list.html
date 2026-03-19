@@ -1,0 +1,33 @@
+<!-- HTMX 부분 렌더링: 관심종목 리스트 -->
+<table class="w-full text-sm">
+  <thead class="bg-gray-50 text-gray-500 text-xs">
+    <tr>
+      <th class="px-4 py-3 text-left">종목명</th>
+      <th class="px-4 py-3 text-left">코드</th>
+      <th class="px-4 py-3 text-left">추가일</th>
+      <th class="px-4 py-3 text-center">삭제</th>
+    </tr>
+  </thead>
+  <tbody class="divide-y divide-gray-50">
+    {% for item in items %}
+    <tr class="hover:bg-gray-50" id="wl-{{ item.code }}">
+      <td class="px-4 py-3 font-medium">{{ item.name }}</td>
+      <td class="px-4 py-3 text-gray-400">{{ item.code }}</td>
+      <td class="px-4 py-3 text-gray-400 text-xs">{{ item.added_at.strftime('%Y.%m.%d') }}</td>
+      <td class="px-4 py-3 text-center">
+        <button
+          hx-delete="/watchlist/{{ item.code }}"
+          hx-target="#watchlist-body"
+          hx-swap="innerHTML"
+          hx-confirm="{{ item.name }}을(를) 관심종목에서 제거할까요?"
+          class="text-red-400 hover:text-red-600 text-xs px-2 py-1 rounded hover:bg-red-50 transition"
+        >삭제</button>
+      </td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="4" class="px-4 py-8 text-center text-gray-400">관심종목이 없습니다</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

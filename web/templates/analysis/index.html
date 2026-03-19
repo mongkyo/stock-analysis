@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Top100 분석{% endblock %}
+{% block page_title %}Top100 분석{% endblock %}
+
+{% block content %}
+
+<!-- 기간 설정 바 -->
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 px-6 py-5 mb-6"
+     x-data="dateBar()" x-init="init()">
+
+  <!-- 빠른 선택 버튼 -->
+  <div class="flex flex-wrap gap-2 mb-4">
+    {% set presets = [
+      ('당월', 'thisMonth'),
+      ('1개월', 'lastMonth'),
+      ('3개월', '3month'),
+      ('6개월', '6month'),
+      ('올해', 'thisYear'),
+    ] %}
+    {% for label, fn in presets %}
+    <button
+      @click="{{ fn }}()"
+      :class="preset === '{{ fn }}' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+      class="px-3 py-1.5 rounded-lg text-sm font-medium transition"
+    >{{ label }}</button>
+    {% endfor %}
+    <button
+      @click="preset='custom'"
+      :class="preset === 'custom' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+      class="px-3 py-1.5 rounded-lg text-sm font-medium transition"
+    >직접입력</button>
+  </div>
+
+  <!-- 날짜 입력 + 시장 선택 -->
+  <div class="flex flex-wrap items-end gap-3">
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">시작일</label>
+      <input type="date" x-model="start"
+        class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">종료일</label>
+      <input type="date" x-model="end"
+        class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+    </div>
+    <div>
+      <label class="block text-xs text-gray-500 mb-1">시장</label>
+      <select x-model="market"
+        class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <option value="통합">통합</option>
+        <option value="코스피">코스피</option>
+        <option value="코스닥">코스닥</option>
+      </select>
+    </div>
+
+    <!-- 조회 버튼 (모든 사용자) -->
+    <button
+      @click="search()"
+      :disabled="loading"
+      class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-5 py-2 rounded-lg text-sm font-semibold transition"
+    >조회</button>
+
+    <!-- 분석 실행 버튼 (admin 전용) -->
+    {% if user.role == 'admin' %}
+    <button
+      @click="runAnalysis()"
+      :disabled="loading"
+      class="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2"
+    >
+      <span x-show="!loading">⚡ 분석 실행</span>
+      <span x-show="loading" class="flex items-center gap-1">
+        <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+        </svg>
+        분석 중...
+      </span>
+    </button>
+    <p class="text-xs text-gray-400 self-end pb-2">KIS API 호출 → DB 저장 (수분 소요)</p>
+    {% endif %}
+  </div>
+
+</div>
+
+<!-- 결과 테이블 (HTMX로 채워짐) -->
+<div id="result-area" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+  <div class="px-6 py-10 text-center text-gray-400 text-sm">기간을 선택하고 조회 또는 분석 실행하세요</div>
+</div>
+
+<script>
+function dateBar() {
+  return {
+    start: '', end: '', market: '통합', preset: '', loading: false,
+
+    init() { this.thisMonth(); },
+
+    thisMonth() {
+      const now = new Date();
+      this.start = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
+      this.end   = now.toISOString().slice(0,10);
+      this.preset = 'thisMonth';
+    },
+    lastMonth() {
+      const now = new Date();
+      const d = new Date(now.getFullYear(), now.getMonth()-1, 1);
+      this.start = d.toISOString().slice(0,10);
+      this.end   = now.toISOString().slice(0,10);
+      this.preset = 'lastMonth';
+    },
+    ['3month']() {
+      const now = new Date();
+      const d = new Date(now); d.setMonth(d.getMonth()-3);
+      this.start = d.toISOString().slice(0,10);
+      this.end   = now.toISOString().slice(0,10);
+      this.preset = '3month';
+    },
+    ['6month']() {
+      const now = new Date();
+      const d = new Date(now); d.setMonth(d.getMonth()-6);
+      this.start = d.toISOString().slice(0,10);
+      this.end   = now.toISOString().slice(0,10);
+      this.preset = '6month';
+    },
+    thisYear() {
+      const now = new Date();
+      this.start = `${now.getFullYear()}-01-01`;
+      this.end   = now.toISOString().slice(0,10);
+      this.preset = 'thisYear';
+    },
+
+    // 기존 DB 결과 조회 (빠름)
+    search() {
+      if (!this.start || !this.end) return;
+      const url = `/analysis/result?start=${this.start}&end=${this.end}&market=${encodeURIComponent(this.market)}`;
+      htmx.ajax('GET', url, {target: '#result-area', swap: 'innerHTML'});
+    },
+
+    // KIS API 분석 실행 후 DB 저장 (admin 전용, 수분 소요)
+    async runAnalysis() {
+      if (!this.start || !this.end) return;
+      if (!confirm(`${this.start} ~ ${this.end} 기간 분석을 실행할까요?\n(KIS API 호출로 수분 소요됩니다)`)) return;
+
+      this.loading = true;
+      document.getElementById('result-area').innerHTML =
+        '<div class="px-6 py-12 text-center text-gray-500">' +
+        '<svg class="animate-spin h-8 w-8 mx-auto mb-3 text-blue-500" fill="none" viewBox="0 0 24 24">' +
+        '<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>' +
+        '<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>' +
+        '<p class="font-medium">분석 실행 중...</p>' +
+        '<p class="text-sm text-gray-400 mt-1">KIS API에서 전 종목 시세를 가져오고 있습니다</p>' +
+        '</div>';
+
+      const url = `/analysis/run?start=${this.start}&end=${this.end}&market=${encodeURIComponent(this.market)}`;
+      htmx.ajax('POST', url, {target: '#result-area', swap: 'innerHTML'});
+
+      // HTMX 완료 이벤트 감지 → loading 해제
+      document.body.addEventListener('htmx:afterSettle', () => {
+        this.loading = false;
+      }, {once: true});
+    }
+  }
+}
+</script>
+
+{% endblock %}
