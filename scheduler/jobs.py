@@ -3,16 +3,19 @@
 ──────────────────────────────────────────────────────
 역할:
   - 장중 30분 폴링: 관심종목 골든크로스 스캔 → 텔레그램 즉시 알림
+  - 매일 15:35 KST: 관심종목 당일 종가 DB 저장
   - 매일 21:00 KST: Top100 분석 → 엑셀 리포트 → 텔레그램 발송
   - 스케줄러 시작/종료 관리
 
 스케줄 구성:
-  scan_job()    — 평일 09:00~15:30 KST, 30분 간격 실행
-  report_job()  — 매일 21:00 KST 실행 (당월 1일~오늘 기준)
+  scan_job()        — 평일 09:00~15:30 KST, 30분 간격 실행
+  daily_price_job() — 평일 15:35 KST 실행 (장 마감 후 종가 저장)
+  report_job()      — 매일 21:00 KST 실행 (당월 1일~오늘 기준)
 
 실행 예:
   python scheduler/jobs.py          # 스케줄러 시작 (Ctrl+C로 종료)
   python scheduler/jobs.py --now scan    # 스캔 즉시 1회 실행 (테스트)
+  python scheduler/jobs.py --now price   # 종가 저장 즉시 1회 실행 (테스트)
   python scheduler/jobs.py --now report  # 리포트 즉시 1회 실행 (테스트)
 
 의존성:
@@ -28,6 +31,7 @@
   2026-03-19  report_job()에 관심종목 수익률 조회 연결
               get_watchlist_performance() → create_excel_report(watchlist_df)
   2026-03-23  scan_job()에 GoldenCrossLog DB 저장 연결
+  2026-03-23  daily_price_job() 추가 — 평일 15:35 관심종목 종가 DB 저장
 ──────────────────────────────────────────────────────
 """
 
@@ -63,6 +67,10 @@ SCAN_START_HOUR  = 9
 SCAN_END_HOUR    = 15
 SCAN_END_MINUTE  = 30
 SCAN_INTERVAL    = 30  # 분
+
+# 종가 저장 시각 (장 마감 15:30 이후)
+PRICE_SAVE_HOUR   = 15
+PRICE_SAVE_MINUTE = 35
 
 # 일일 리포트 시각
 REPORT_HOUR   = 21
@@ -165,6 +173,134 @@ def scan_job() -> None:
         print(f"[스캔 작업 오류] {e}")
 
 
+def daily_price_job() -> None:
+    """코스피+코스닥 전 종목 당일 종가 DB 저장 작업 (평일 15:35 KST 실행)
+
+    장 마감(15:30) 후 5분 뒤 실행.
+    전 종목 종가를 StockPrice 테이블에 저장하여 이후 분석 시 API 재호출 없이
+    DB에서 즉시 수익률 계산 가능.
+    이미 저장된 (code, date)는 UniqueConstraint로 자동 skip.
+    """
+    import time
+    import requests as _req
+
+    today = datetime.date.today()
+
+    # 주말 제외
+    if today.weekday() >= 5:
+        return
+
+    today_str = today.strftime("%Y%m%d")
+    week_ago  = (today - datetime.timedelta(days=7)).strftime("%Y%m%d")
+
+    print(f"\n[종가 저장] {today_str} 전 종목 시작")
+
+    try:
+        from api.database import SessionLocal
+        from api.models.stock import StockPrice
+    except ImportError as e:
+        print(f"[종가 저장] import 실패 (web/ 경로 확인 필요): {e}")
+        return
+
+    client = _get_client()
+
+    # 코스피 + 코스닥 전 종목 로드
+    try:
+        kospi_stocks  = client.download_stock_list("J")
+        kosdaq_stocks = client.download_stock_list("Q")
+        all_stocks = kospi_stocks + kosdaq_stocks
+        print(f"  전체 {len(all_stocks):,}개 종목 로드 완료")
+    except Exception as e:
+        print(f"[종가 저장] 종목 리스트 로드 실패: {e}")
+        return
+
+    # 이미 오늘 저장된 종목 코드 조회 (중복 API 호출 방지)
+    db = SessionLocal()
+    try:
+        already_saved = {
+            row.code
+            for row in db.query(StockPrice.code)
+                         .filter(StockPrice.date == today_str)
+                         .all()
+        }
+        print(f"  이미 저장됨: {len(already_saved)}개 — skip 예정")
+    except Exception as e:
+        print(f"[종가 저장] 기저장 조회 실패: {e}")
+        db.close()
+        return
+
+    url = (f"{client.base_url}/uapi/domestic-stock/v1/quotations"
+           "/inquire-daily-itemchartprice")
+
+    saved = 0
+    errors = 0
+    batch = []  # DB bulk insert용
+
+    try:
+        for i, item in enumerate(all_stocks, start=1):
+            code = item["종목코드"]
+            name = item["종목명"]
+
+            if code in already_saved:
+                continue
+
+            # KIS API 호출 (10req/초 제한 — 0.1초 간격)
+            time.sleep(0.1)
+
+            try:
+                params = {
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_INPUT_ISCD": code,
+                    "FID_INPUT_DATE_1": week_ago,
+                    "FID_INPUT_DATE_2": today_str,
+                    "FID_PERIOD_DIV_CODE": "D",
+                    "FID_ORG_ADJ_PRC": "0",
+                }
+                resp = _req.get(
+                    url, headers=client._header("FHKST03010100"),
+                    params=params, timeout=10)
+                data = resp.json()
+                records = [
+                    r for r in data.get("output2", [])
+                    if r.get("stck_clpr") and int(r["stck_clpr"]) > 0
+                ]
+                if not records:
+                    continue
+
+                # output2: 최신일이 앞에 위치
+                latest_date = records[0].get("stck_bsop_date", today_str)
+                close_price = int(records[0]["stck_clpr"])
+
+                batch.append(StockPrice(
+                    code=code, name=name,
+                    date=latest_date, close_price=close_price,
+                ))
+                saved += 1
+
+                # 100개마다 bulk insert (메모리 절약)
+                if len(batch) >= 100:
+                    db.add_all(batch)
+                    db.commit()
+                    batch.clear()
+                    print(f"  진행 중... {i:,}/{len(all_stocks):,} ({saved}건 저장)")
+
+            except Exception as e:
+                errors += 1
+
+        # 남은 배치 저장
+        if batch:
+            db.add_all(batch)
+            db.commit()
+
+        print(f"[종가 저장] 완료 — {saved}건 저장, {errors}건 오류")
+
+    except Exception as e:
+        db.rollback()
+        print(f"[종가 저장 오류] {e}")
+    finally:
+        db.close()
+
+
 def report_job() -> None:
     """일일 Top100 리포트 작업 (매일 21:00 KST 실행)
 
@@ -234,6 +370,20 @@ def start_scheduler() -> None:
         misfire_grace_time=60,   # 1분 내 지연 허용
     )
 
+    # 평일 15:35 종가 저장
+    scheduler.add_job(
+        daily_price_job,
+        trigger=CronTrigger(
+            day_of_week="mon-fri",
+            hour=PRICE_SAVE_HOUR,
+            minute=PRICE_SAVE_MINUTE,
+            timezone=TZ,
+        ),
+        id="daily_price_job",
+        name="일일 종가 저장",
+        misfire_grace_time=300,
+    )
+
     # 매일 21:00 리포트
     scheduler.add_job(
         report_job,
@@ -252,6 +402,7 @@ def start_scheduler() -> None:
     print(f"  골든크로스 스캔: 평일 {SCAN_START_HOUR:02d}:00~"
           f"{SCAN_END_HOUR:02d}:{SCAN_END_MINUTE:02d}, "
           f"{SCAN_INTERVAL}분 간격")
+    print(f"  일일 종가 저장:  평일 {PRICE_SAVE_HOUR:02d}:{PRICE_SAVE_MINUTE:02d} KST")
     print(f"  일일 리포트:     매일 {REPORT_HOUR:02d}:{REPORT_MINUTE:02d} KST")
     print("  Ctrl+C로 종료")
     print("=" * 50)
@@ -269,8 +420,8 @@ def main():
     parser = argparse.ArgumentParser(description="APScheduler 자동화")
     parser.add_argument(
         "--now",
-        choices=["scan", "report"],
-        help="즉시 1회 실행 (테스트용): scan | report",
+        choices=["scan", "price", "report"],
+        help="즉시 1회 실행 (테스트용): scan | price | report",
     )
     args = parser.parse_args()
 
@@ -286,6 +437,11 @@ def main():
         signals = scan_watchlist(client)
         if signals:
             send_golden_cross_alert(signals)
+        return
+
+    if args.now == "price":
+        print("[즉시 실행] 종가 저장")
+        daily_price_job()
         return
 
     if args.now == "report":
