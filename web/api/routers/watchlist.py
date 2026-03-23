@@ -32,10 +32,9 @@ def watchlist_page(request: Request, db: Session = Depends(get_db),
              .filter(WatchlistItem.user_id == user.id)
              .order_by(WatchlistItem.added_at.desc())
              .all())
-    return templates.TemplateResponse("watchlist/index.html", {
-        "request": request,
-        "user":    user,
-        "items":   items,
+    return templates.TemplateResponse(request, "watchlist/index.html", {
+        "user":  user,
+        "items": items,
     })
 
 
@@ -63,9 +62,8 @@ def add_watchlist(
              .filter(WatchlistItem.user_id == user.id)
              .order_by(WatchlistItem.added_at.desc())
              .all())
-    return templates.TemplateResponse("watchlist/partials/list.html", {
-        "request": request,
-        "items":   items,
+    return templates.TemplateResponse(request, "watchlist/partials/list.html", {
+        "items": items,
     })
 
 
@@ -87,7 +85,6 @@ def remove_watchlist(
              .filter(WatchlistItem.user_id == user.id)
              .order_by(WatchlistItem.added_at.desc())
              .all())
-    return templates.TemplateResponse("watchlist/partials/list.html", {
-        "request": request,
-        "items":   items,
+    return templates.TemplateResponse(request, "watchlist/partials/list.html", {
+        "items": items,
     })

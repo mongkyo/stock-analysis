@@ -25,7 +25,7 @@ templates = Jinja2Templates(directory="templates")
 
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    return templates.TemplateResponse("auth/login.html", {"request": request})
+    return templates.TemplateResponse(request, "auth/login.html")
 
 
 @router.post("/login")
@@ -39,14 +39,12 @@ def login(
     user = db.query(User).filter(User.username == username).first()
 
     if not user or not verify_password(password, user.hashed_pw):
-        return templates.TemplateResponse("auth/login.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "auth/login.html", {
             "error": "아이디 또는 비밀번호가 올바르지 않습니다.",
         })
 
     if not user.is_active:
-        return templates.TemplateResponse("auth/login.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "auth/login.html", {
             "error": "비활성화된 계정입니다. 관리자에게 문의하세요.",
         })
 

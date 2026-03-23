@@ -71,8 +71,7 @@ def dashboard(request: Request, db: Session = Depends(get_db),
                .order_by(GoldenCrossLog.detected_at.desc())
                .limit(5).all())
 
-    return templates.TemplateResponse("dashboard/index.html", {
-        "request":  request,
+    return templates.TemplateResponse(request, "dashboard/index.html", {
         "user":     user,
         "top5":     top5,
         "summary":  summary,
@@ -82,9 +81,8 @@ def dashboard(request: Request, db: Session = Depends(get_db),
 
 @router.get("/analysis", response_class=HTMLResponse)
 def analysis_page(request: Request, user: User = Depends(get_current_user)):
-    return templates.TemplateResponse("analysis/index.html", {
-        "request": request,
-        "user":    user,
+    return templates.TemplateResponse(request, "analysis/index.html", {
+        "user": user,
     })
 
 
@@ -116,26 +114,21 @@ def analysis_run(
         run_msg = f"분석 완료 — {result['saved']}건 저장"
         if excel_name:
             run_msg += f" · 엑셀 저장됨 ({excel_name})"
-        return templates.TemplateResponse("analysis/partials/table.html", {
-            "request":    request,
+        return templates.TemplateResponse(request, "analysis/partials/table.html", {
             "results":    results,
             "market":     market,
             "start":      start,
             "end":        end,
             "run_msg":    run_msg,
-            "excel_name": excel_name,  # 다운로드 링크용
+            "excel_name": excel_name,
         })
     except ValueError as e:
-        # KIS 키 미설정 등 설정 오류
-        return templates.TemplateResponse("analysis/partials/error.html", {
-            "request": request,
-            "error":   str(e),
+        return templates.TemplateResponse(request, "analysis/partials/error.html", {
+            "error": str(e),
         })
     except RuntimeError as e:
-        # API 호출 실패, 결과 없음 등
-        return templates.TemplateResponse("analysis/partials/error.html", {
-            "request": request,
-            "error":   str(e),
+        return templates.TemplateResponse(request, "analysis/partials/error.html", {
+            "error": str(e),
         })
 
 
@@ -156,8 +149,7 @@ def analysis_result(
                .order_by(AnalysisResult.rank)
                .limit(100).all())
 
-    return templates.TemplateResponse("analysis/partials/table.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "analysis/partials/table.html", {
         "results": results,
         "market":  market,
         "start":   start,
@@ -173,8 +165,7 @@ def reports_page(request: Request, user: User = Depends(get_current_user)):
         reverse=True)
     report_list = [os.path.basename(f) for f in files]
 
-    return templates.TemplateResponse("dashboard/reports.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard/reports.html", {
         "user":    user,
         "reports": report_list,
     })
