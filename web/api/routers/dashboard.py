@@ -22,11 +22,55 @@ from sqlalchemy.orm import Session
 from api.database import get_db
 from api.auth import get_current_user, require_role
 from api.models.user import User, UserRole
-from api.models.stock import AnalysisResult, GoldenCrossLog
+from api.models.stock import AnalysisResult, GoldenCrossLog, StockPrice
+from sqlalchemy.orm import aliased
 from api.services.analysis_service import run_analysis
 
 router = APIRouter(tags=["dashboard"])
 templates = Jinja2Templates(directory="templates")
+
+
+class _ResultRow:
+    """AnalysisResult + 가격 정보를 하나의 객체로 래핑 — 템플릿 호환용"""
+    __slots__ = ("rank", "code", "name", "growth_rate", "roe", "op_margin",
+                 "start_date", "end_date", "start_price", "end_price")
+
+    def __init__(self, ar: AnalysisResult, start_price, end_price):
+        self.rank        = ar.rank
+        self.code        = ar.code
+        self.name        = ar.name
+        self.growth_rate = ar.growth_rate
+        self.roe         = ar.roe
+        self.op_margin   = ar.op_margin
+        self.start_date  = ar.start_date
+        self.end_date    = ar.end_date
+        self.start_price = start_price or 0
+        self.end_price   = end_price   or 0
+
+
+def _query_results_with_prices(db, start: str, end: str, market: str,
+                                limit: int = 100) -> list[_ResultRow]:
+    """AnalysisResult + StockPrice 조인 → _ResultRow 리스트 반환"""
+    sp_start = aliased(StockPrice)
+    sp_end   = aliased(StockPrice)
+    rows = (
+        db.query(
+            AnalysisResult,
+            sp_start.close_price.label("start_price"),
+            sp_end.close_price.label("end_price"),
+        )
+        .outerjoin(sp_start, (sp_start.code == AnalysisResult.code) &
+                             (sp_start.date == AnalysisResult.start_date))
+        .outerjoin(sp_end,   (sp_end.code == AnalysisResult.code) &
+                             (sp_end.date == AnalysisResult.end_date))
+        .filter(AnalysisResult.start_date == start,
+                AnalysisResult.end_date == end,
+                AnalysisResult.market == market)
+        .order_by(AnalysisResult.rank)
+        .limit(limit)
+        .all()
+    )
+    return [_ResultRow(ar, sp, ep) for ar, sp, ep in rows]
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data")
 
@@ -50,12 +94,7 @@ def dashboard(request: Request, db: Session = Depends(get_db),
         start_date = latest.start_date
         end_date   = latest.end_date
 
-        top5 = (db.query(AnalysisResult)
-                .filter(AnalysisResult.market == "통합",
-                        AnalysisResult.start_date == start_date,
-                        AnalysisResult.end_date == end_date)
-                .order_by(AnalysisResult.rank)
-                .limit(5).all())
+        top5 = _query_results_with_prices(db, start_date, end_date, "통합", limit=5)
 
         summary = {
             "start_date": f"{start_date[:4]}.{start_date[4:6]}.{start_date[6:]}",
@@ -106,12 +145,8 @@ def analysis_run(
     try:
         result = run_analysis(db, start, end)
         # 저장 완료 후 해당 기간 통합 결과 조회
-        results = (db.query(AnalysisResult)
-                   .filter(AnalysisResult.start_date == start.replace("-", ""),
-                           AnalysisResult.end_date == end.replace("-", ""),
-                           AnalysisResult.market == market)
-                   .order_by(AnalysisResult.rank)
-                   .limit(100).all())
+        results = _query_results_with_prices(
+            db, start.replace("-", ""), end.replace("-", ""), market)
         import os
         excel_name = os.path.basename(result["excel_path"]) if result.get("excel_path") else None
         run_msg = f"분석 완료 — {result['saved']}건 저장"
@@ -145,12 +180,8 @@ def analysis_result(
     user: User = Depends(get_current_user),
 ):
     """HTMX 요청 — Top100 테이블 부분 렌더링"""
-    results = (db.query(AnalysisResult)
-               .filter(AnalysisResult.start_date == start.replace("-", ""),
-                       AnalysisResult.end_date == end.replace("-", ""),
-                       AnalysisResult.market == market)
-               .order_by(AnalysisResult.rank)
-               .limit(100).all())
+    results = _query_results_with_prices(
+        db, start.replace("-", ""), end.replace("-", ""), market)
 
     return templates.TemplateResponse(request, "analysis/partials/table.html", {
         "results": results,

@@ -3,22 +3,26 @@
 ──────────────────────────────────────────────────────
 역할:
   - KIS API 호출 → Top100 분석 실행
-  - 결과를 analysis_results DB 테이블에 upsert
+  - 종가를 stock_prices 테이블에 저장 (재사용 가능)
+  - 분석 결과를 analysis_results 테이블에 upsert
   - admin 전용 (routers/dashboard.py 에서 require_role(admin) 보호)
 
 주요 함수:
   run_analysis(db, start, end) → dict
       {"saved": int, "markets": list}  — 저장 건수 반환
-  _upsert_results(db, rows, market) → int
+  _upsert_stock_prices(db, rows, start, end) → None
+      시작일·종료일 종가를 StockPrice 테이블에 저장 (중복 무시)
+  _upsert_results(db, rows, market, start, end) → int
       AnalysisResult 레코드 upsert
 
 의존성:
   - scripts/top100.py (get_combined_top100)
   - api/config.py (KIS 키)
-  - api/models/stock.py (AnalysisResult)
+  - api/models/stock.py (AnalysisResult, StockPrice)
 
 수정 이력:
   2026-03-19  최초 작성
+  2026-03-23  StockPrice 저장 추가, AnalysisResult 가격 컬럼 제거
 ──────────────────────────────────────────────────────
 """
 
@@ -29,7 +33,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from api.config import settings
-from api.models.stock import AnalysisResult
+from api.models.stock import AnalysisResult, StockPrice
 
 # scripts/ 경로를 sys.path에 추가 (top100.py import용)
 _scripts_dir = os.path.abspath(
@@ -53,9 +57,46 @@ def _get_kis_client():
     )
 
 
+def _upsert_stock_prices(db: Session, rows: list[dict],
+                         start: str, end: str) -> None:
+    """시작일·종료일 종가를 StockPrice 테이블에 저장 (이미 있으면 skip)
+
+    Args:
+        db:    DB 세션
+        rows:  [{"code", "name", "start_price", "end_price"}, ...]
+        start: YYYYMMDD (시작일)
+        end:   YYYYMMDD (종료일)
+    """
+    # 이미 저장된 (code, date) 쌍 조회
+    codes = [r["code"] for r in rows]
+    existing = {
+        (sp.code, sp.date)
+        for sp in db.query(StockPrice.code, StockPrice.date)
+                    .filter(StockPrice.code.in_(codes),
+                            StockPrice.date.in_([start, end]))
+                    .all()
+    }
+
+    new_prices = []
+    for row in rows:
+        if (row["code"], start) not in existing:
+            new_prices.append(StockPrice(
+                code=row["code"], name=row["name"],
+                date=start, close_price=row["start_price"],
+            ))
+        if (row["code"], end) not in existing:
+            new_prices.append(StockPrice(
+                code=row["code"], name=row["name"],
+                date=end, close_price=row["end_price"],
+            ))
+
+    if new_prices:
+        db.add_all(new_prices)
+
+
 def _upsert_results(db: Session, rows: list[dict], market: str,
                     start: str, end: str) -> int:
-    """분석 결과를 DB에 upsert (같은 기간+시장+종목코드+순위 → 덮어쓰기)
+    """분석 결과를 DB에 upsert (같은 기간+시장 → 삭제 후 재삽입)
 
     Args:
         db:     DB 세션
@@ -67,7 +108,6 @@ def _upsert_results(db: Session, rows: list[dict], market: str,
     Returns:
         저장된 레코드 수
     """
-    # 해당 기간+시장 기존 데이터 삭제 후 재삽입 (upsert 대신 delete-insert)
     (db.query(AnalysisResult)
      .filter(AnalysisResult.start_date == start,
              AnalysisResult.end_date == end,
@@ -82,8 +122,6 @@ def _upsert_results(db: Session, rows: list[dict], market: str,
             rank=row["rank"],
             code=row["code"],
             name=row["name"],
-            start_price=row["start_price"],
-            end_price=row["end_price"],
             growth_rate=row["growth_rate"],
             roe=row.get("roe"),
             op_margin=row.get("op_margin"),
@@ -172,6 +210,9 @@ def run_analysis(db: Session, start: str, end: str) -> dict:
         if df.empty:
             continue
         rows = _df_to_rows(df, market)
+        # 종가 원본 저장 (중복 skip) — 분석 결과보다 먼저 저장
+        if market == "통합":
+            _upsert_stock_prices(db, rows, start, end)
         total_saved += _upsert_results(db, rows, market, start, end)
 
     db.commit()
