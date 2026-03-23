@@ -121,15 +121,21 @@ def create_excel_report(combined_df: pd.DataFrame,
     filepath = os.path.join(DATA_DIR, filename)
 
     try:
+        # 엑셀은 수익률 순으로 출력 (복합점수 정렬과 무관하게 유지)
+        def _by_return(df: pd.DataFrame) -> pd.DataFrame:
+            if df.empty or "수익률(%)" not in df.columns:
+                return df
+            return df.sort_values("수익률(%)", ascending=False).reset_index(drop=True)
+
         with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
             # 1. 통합_TOP100
-            _write_sheet(writer, combined_df, "통합_TOP100", DISPLAY_COLS)
+            _write_sheet(writer, _by_return(combined_df), "통합_TOP100", DISPLAY_COLS)
 
             # 2. 코스피_TOP100
-            _write_sheet(writer, kospi_df, "코스피_TOP100", DISPLAY_COLS)
+            _write_sheet(writer, _by_return(kospi_df), "코스피_TOP100", DISPLAY_COLS)
 
             # 3. 코스닥_TOP100
-            _write_sheet(writer, kosdaq_df, "코스닥_TOP100", DISPLAY_COLS)
+            _write_sheet(writer, _by_return(kosdaq_df), "코스닥_TOP100", DISPLAY_COLS)
 
             # 4. 재진입_포착
             if reentry_df.empty:

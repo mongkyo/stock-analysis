@@ -37,6 +37,7 @@
         <th class="px-4 py-3 text-right">수익률</th>
         <th class="px-4 py-3 text-right">ROE</th>
         <th class="px-4 py-3 text-right">영업이익률</th>
+        <th class="px-4 py-3 text-right text-indigo-600">종합점수</th>
       </tr>
     </thead>
     <tbody class="divide-y divide-gray-50">
@@ -57,10 +58,13 @@
         <td class="px-4 py-3 text-right text-gray-600">
           {% if r.op_margin is not none %}{{ "%.1f"|format(r.op_margin) }}%{% else %}—{% endif %}
         </td>
+        <td class="px-4 py-3 text-right font-semibold text-indigo-600">
+          {% if r.score is not none %}{{ "%.1f"|format(r.score) }}{% else %}—{% endif %}
+        </td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="8" class="px-4 py-10 text-center text-gray-400">해당 기간의 분석 데이터가 없습니다</td>
+        <td colspan="9" class="px-4 py-10 text-center text-gray-400">해당 기간의 분석 데이터가 없습니다</td>
       </tr>
       {% endfor %}
     </tbody>

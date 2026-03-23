@@ -125,6 +125,7 @@ def _upsert_results(db: Session, rows: list[dict], market: str,
             growth_rate=row["growth_rate"],
             roe=row.get("roe"),
             op_margin=row.get("op_margin"),
+            score=row.get("score"),
         )
         for row in rows
     ]
@@ -151,6 +152,7 @@ def _df_to_rows(df, market: str) -> list[dict]:
             "growth_rate": float(row_dict["수익률(%)"]),
             "roe":         float(row_dict["ROE"]) if row_dict.get("ROE") is not None else None,
             "op_margin":   float(row_dict["영업이익률"]) if row_dict.get("영업이익률") is not None else None,
+            "score":       float(row_dict["종합점수"]) if row_dict.get("종합점수") is not None else None,
         })
     return rows
 

@@ -55,6 +55,7 @@ class AnalysisResult(Base):
     growth_rate : Mapped[float]           = mapped_column(Float)
     roe         : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     op_margin   : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    score       : Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 복합점수
     created_at  : Mapped[datetime]        = mapped_column(DateTime, default=datetime.utcnow)
 
 

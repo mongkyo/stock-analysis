@@ -35,6 +35,9 @@
   2026-03-19  Phase 1-2: get_combined_top100()에 재무 데이터 연동 추가
   2026-03-19  get_watchlist_performance() 추가 — 관심종목 기간 수익률 조회
               scheduler/jobs.py report_job()에서 호출 → 엑셀 관심종목 시트 연결
+  2026-03-23  FETCH_N 300→500, calculate_composite_score() 추가
+              수익률60%+ROE25%+영업이익률15% 백분위 가중합산 → 복합점수 Top100 정렬
+              엑셀은 수익률 순 유지, 웹 분석 결과만 복합점수 순
 ──────────────────────────────────────────────────────
 """
 
@@ -61,8 +64,15 @@ OP_MARGIN_THRESHOLD = 0     # 영업이익률 이 값 미만 종목 제외
 REENTRY_PREV_RANK = 50      # 재진입: 이전달 이 순위 초과였던 종목만
 
 TOP_N = 100                 # 최종 출력 종목 수
-FETCH_N = 300               # 재무필터 손실분 감안 초기 추출 수 (TOP_N * 3)
+FETCH_N = 500               # 복합 점수 산정 범위 (수익률 기준 상위 500 → 재무조회 → 점수 정렬)
 MAX_WORKERS = 5             # 병렬 API 호출 스레드 수
+
+# ── 복합 점수 가중치 ────────────────────────────────────────
+SCORE_WEIGHTS = {
+    "수익률(%)": 0.60,   # 모멘텀 (핵심 지표)
+    "ROE":       0.25,   # 자본 효율성
+    "영업이익률": 0.15,  # 사업 안정성
+}
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
@@ -250,13 +260,18 @@ def get_combined_top100(client: KISClient,
     kospi_df = _merge_fin(kospi_df)
     kosdaq_df = _merge_fin(kosdaq_df)
 
-    # ── 재무 필터 적용 후 TOP_N으로 최종 컷 ─────────────────
-    # 필터 전 FETCH_N을 확보했으므로 필터 후에도 TOP_N 충족 가능
-    combined = filter_by_financials(combined).head(TOP_N).reset_index(drop=True)
-    kospi_df = filter_by_financials(kospi_df).head(TOP_N).reset_index(drop=True)
-    kosdaq_df = filter_by_financials(kosdaq_df).head(TOP_N).reset_index(drop=True)
+    # ── 재무 필터 → 복합 점수 정렬 → TOP_N 최종 컷 ──────────
+    # 1) 마이너스 필터 (ROE_THRESHOLD, OP_MARGIN_THRESHOLD 기준)
+    # 2) 풀 내 백분위 기반 복합 점수 산정 (수익률60 + ROE25 + OPM15)
+    # 3) 복합 점수 내림차순 Top100 추출
+    combined  = calculate_composite_score(
+        filter_by_financials(combined)).head(TOP_N).reset_index(drop=True)
+    kospi_df  = calculate_composite_score(
+        filter_by_financials(kospi_df)).head(TOP_N).reset_index(drop=True)
+    kosdaq_df = calculate_composite_score(
+        filter_by_financials(kosdaq_df)).head(TOP_N).reset_index(drop=True)
 
-    print(f"  [통합] 필터 후 {len(combined)}개 / "
+    print(f"  [통합] 복합점수 Top{len(combined)} / "
           f"[코스피] {len(kospi_df)}개 / [코스닥] {len(kosdaq_df)}개")
 
     return combined, kospi_df, kosdaq_df
@@ -290,6 +305,39 @@ def filter_by_financials(df: pd.DataFrame) -> pd.DataFrame:
     print(f"[재무 필터] {before}개 → {after}개 "
           f"(ROE<{ROE_THRESHOLD} 또는 OPM<{OP_MARGIN_THRESHOLD} 제외)")
     return filtered.reset_index(drop=True)
+
+
+# ── 복합 점수 산정 ─────────────────────────────────────────
+
+def calculate_composite_score(df: pd.DataFrame) -> pd.DataFrame:
+    """수익률·ROE·영업이익률 백분위 가중합산으로 종합점수 계산
+
+    각 지표를 그룹 내 백분위(0~100)로 정규화 후 SCORE_WEIGHTS로 가중합산.
+    None/NaN은 중앙값으로 대체 (데이터 없음 = 중립 처리).
+
+    Args:
+        df: 수익률(%), ROE, 영업이익률 컬럼이 포함된 DataFrame
+
+    Returns:
+        종합점수 컬럼 추가 + 종합점수 내림차순 정렬된 DataFrame
+    """
+    df = df.copy()
+    score = pd.Series(0.0, index=df.index)
+
+    for col, weight in SCORE_WEIGHTS.items():
+        if col not in df.columns:
+            continue
+        series = df[col].copy().astype(float)
+        # None/NaN → 중앙값으로 대체 (데이터 미수집 종목에 패널티 없이 중립)
+        series = series.fillna(series.median())
+        # 백분위 변환 (0~100, 높을수록 좋음)
+        pct = series.rank(pct=True, method="average") * 100
+        score += pct * weight
+
+    df["종합점수"] = score.round(2)
+    df.sort_values("종합점수", ascending=False, inplace=True)
+    df.reset_index(drop=True, inplace=True)
+    return df
 
 
 # ── 재진입 포착 ────────────────────────────────────────────

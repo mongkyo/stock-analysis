@@ -33,7 +33,7 @@ templates = Jinja2Templates(directory="templates")
 class _ResultRow:
     """AnalysisResult + 가격 정보를 하나의 객체로 래핑 — 템플릿 호환용"""
     __slots__ = ("rank", "code", "name", "growth_rate", "roe", "op_margin",
-                 "start_date", "end_date", "start_price", "end_price")
+                 "score", "start_date", "end_date", "start_price", "end_price")
 
     def __init__(self, ar: AnalysisResult, start_price, end_price):
         self.rank        = ar.rank
@@ -42,6 +42,7 @@ class _ResultRow:
         self.growth_rate = ar.growth_rate
         self.roe         = ar.roe
         self.op_margin   = ar.op_margin
+        self.score       = ar.score
         self.start_date  = ar.start_date
         self.end_date    = ar.end_date
         self.start_price = start_price or 0
