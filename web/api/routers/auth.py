@@ -16,8 +16,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from api.database import get_db
-from api.models.user import User
-from api.auth import verify_password, create_token
+from api.models.user import User, UserRole, AuthProvider
+from api.auth import verify_password, create_token, hash_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 templates = Jinja2Templates(directory="templates")
@@ -59,6 +59,55 @@ def login(
         samesite="lax",
     )
     return response
+
+
+@router.get("/register", response_class=HTMLResponse)
+def register_page(request: Request):
+    return templates.TemplateResponse(request, "auth/register.html")
+
+
+@router.post("/register", response_class=HTMLResponse)
+def register(
+    request: Request,
+    name: str = Form(...),
+    username: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    password_confirm: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    # 비밀번호 확인
+    if password != password_confirm:
+        return templates.TemplateResponse(request, "auth/register.html", {
+            "error": "비밀번호가 일치하지 않습니다.",
+        })
+
+    # 아이디 중복 체크
+    if db.query(User).filter(User.username == username).first():
+        return templates.TemplateResponse(request, "auth/register.html", {
+            "error": "이미 사용중인 아이디입니다.",
+        })
+
+    # 이메일 중복 체크
+    if db.query(User).filter(User.email == email).first():
+        return templates.TemplateResponse(request, "auth/register.html", {
+            "error": "이미 사용중인 이메일입니다.",
+        })
+
+    # 회원 생성 (is_active=False → 관리자 승인 대기)
+    user = User(
+        name=name,
+        username=username,
+        email=email,
+        hashed_pw=hash_password(password),
+        auth_provider=AuthProvider.local,
+        role=UserRole.basic,
+        is_active=False,
+    )
+    db.add(user)
+    db.commit()
+
+    return templates.TemplateResponse(request, "auth/pending.html")
 
 
 @router.get("/logout")

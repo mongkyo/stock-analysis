@@ -14,7 +14,7 @@
 import argparse
 from api.database import SessionLocal, engine, Base
 from api.models import user as user_module, stock  # noqa — 테이블 생성 보장
-from api.models.user import User, UserRole
+from api.models.user import User, UserRole, AuthProvider
 from api.auth import hash_password
 
 Base.metadata.create_all(bind=engine)
@@ -31,8 +31,9 @@ def create_admin(username: str, email: str, password: str) -> None:
             username=username,
             email=email,
             hashed_pw=hash_password(password),
+            auth_provider=AuthProvider.local,
             role=UserRole.admin,
-            is_active=True,
+            is_active=True,  # 관리자는 승인 없이 바로 활성화
         )
         db.add(admin)
         db.commit()

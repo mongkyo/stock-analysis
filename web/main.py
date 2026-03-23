@@ -23,7 +23,7 @@ import os
 from api.database import engine, Base
 # 모델 import — create_all이 테이블 생성할 수 있도록
 from api.models import user, stock  # noqa: F401
-from api.routers import auth, dashboard, watchlist
+from api.routers import auth, dashboard, watchlist, admin
 
 # ── DB 테이블 생성 ─────────────────────────────────────
 Base.metadata.create_all(bind=engine)
@@ -40,6 +40,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(watchlist.router)
+app.include_router(admin.router)
 
 
 # ── 303 리다이렉트 예외 처리 ───────────────────────────
