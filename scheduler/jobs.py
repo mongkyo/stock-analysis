@@ -27,6 +27,7 @@
               평일 장 시간만 스캔, 주말 자동 제외
   2026-03-19  report_job()에 관심종목 수익률 조회 연결
               get_watchlist_performance() → create_excel_report(watchlist_df)
+  2026-03-23  scan_job()에 GoldenCrossLog DB 저장 연결
 ──────────────────────────────────────────────────────
 """
 
@@ -37,6 +38,8 @@ import datetime
 
 # scripts/ 폴더를 import 경로에 추가
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+# web/ 폴더를 import 경로에 추가 (DB 모델 접근)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "web"))
 
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -82,6 +85,47 @@ def _get_client() -> KISClient:
     return _client
 
 
+# ── DB 저장 헬퍼 ───────────────────────────────────────────
+
+def _save_golden_cross_logs(signals: list[dict], detected_at: datetime.datetime) -> None:
+    """골든크로스 신호를 DB GoldenCrossLog 테이블에 저장"""
+    try:
+        from api.database import SessionLocal
+        from api.models.stock import GoldenCrossLog
+    except ImportError as e:
+        print(f"[DB 저장] import 실패 (web/ 경로 확인 필요): {e}")
+        return
+
+    db = SessionLocal()
+    try:
+        for sig in signals:
+            # signal_at: "HH:MM" 또는 datetime 문자열에서 HHMMSS 추출
+            signal_dt = sig.get("datetime", "")
+            if isinstance(signal_dt, str) and len(signal_dt) >= 5:
+                signal_at = signal_dt.replace(":", "")[:6]  # HHMMSS
+            else:
+                signal_at = detected_at.strftime("%H%M%S")
+
+            log = GoldenCrossLog(
+                code=sig.get("종목코드", ""),
+                name=sig.get("종목명", ""),
+                signal_at=signal_at,
+                close=float(sig.get("close", 0) or 0),
+                ma3=float(sig.get("ma3", 0) or 0),
+                ma5=float(sig.get("ma5", 0) or 0),
+                detected_at=detected_at,
+            )
+            db.add(log)
+
+        db.commit()
+        print(f"  [DB 저장] 골든크로스 {len(signals)}건 저장 완료")
+    except Exception as e:
+        db.rollback()
+        print(f"  [DB 저장 오류] {e}")
+    finally:
+        db.close()
+
+
 # ── 작업 함수 ──────────────────────────────────────────────
 
 def scan_job() -> None:
@@ -113,6 +157,7 @@ def scan_job() -> None:
 
         if signals:
             send_golden_cross_alert(signals)
+            _save_golden_cross_logs(signals, now)
         else:
             print("  신호 없음")
 

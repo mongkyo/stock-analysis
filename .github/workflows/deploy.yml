@@ -1,0 +1,35 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted  # 맥북프로에 등록된 runner
+
+    steps:
+      - name: 코드 최신화
+        run: |
+          cd /Users/mongkyo/Developer/stock-analysis
+          git pull origin main
+
+      - name: 패키지 설치
+        run: |
+          cd /Users/mongkyo/Developer/stock-analysis
+          pip3 install -r requirements.txt --quiet
+
+      - name: 웹 서버 재시작
+        run: |
+          # launchd 서비스로 등록된 uvicorn 재시작
+          launchctl stop com.stock.uvicorn || true
+          sleep 1
+          launchctl start com.stock.uvicorn
+
+      - name: 배포 완료 확인
+        run: |
+          sleep 3
+          curl -sf http://localhost:8000/auth/login > /dev/null \
+            && echo "✅ 서버 정상 응답" \
+            || echo "⚠️ 서버 응답 없음 — 로그 확인 필요"
