@@ -2,23 +2,25 @@
 [report.py] 엑셀 리포트 생성 모듈
 ──────────────────────────────────────────────────────
 역할:
-  - Top100 분석 결과를 5개 시트 엑셀 파일로 생성
+  - Top100 분석 결과를 6개 시트 엑셀 파일로 생성
   - 저장 위치: data/report_YYYYMMDD_YYYYMMDD.xlsx
 
 시트 구성:
-  1. 통합_TOP100   — 코스피+코스닥 전체 수익률 Top100
-  2. 코스피_TOP100 — 코스피 단독 Top100
-  3. 코스닥_TOP100 — 코스닥 단독 Top100
-  4. 재진입_포착   — 이전 기간 51~100위 → 이번 Top100 재진입 종목
-  5. 관심종목      — data/watchlist.json 등록 종목 (없으면 시트 생략)
+  1. 통합_TOP100   — 코스피+코스닥 전체 수익률 Top100 (수익률 순)
+  2. 코스피_TOP100 — 코스피 단독 Top100 (수익률 순)
+  3. 코스닥_TOP100 — 코스닥 단독 Top100 (수익률 순)
+  4. 복합점수_TOP100 — 수익률60+ROE25+영업이익률15 가중합산 순위
+  5. 재진입_포착   — 이전 기간 51~100위 → 이번 Top100 재진입 종목
+  6. 관심종목      — data/watchlist.json 등록 종목 (없으면 시트 생략)
 
 주요 함수:
   create_excel_report(combined, kospi, kosdaq, reentry, start, end,
                       watchlist_df=None)
       → 생성된 엑셀 파일 경로(str) 반환
 
-컬럼 순서 (전 시트 공통):
-  종목코드 | 종목명 | 시작가 | 종료가 | 수익률(%) | ROE | 영업이익률
+컬럼 순서:
+  수익률 시트: 종목코드 | 종목명 | 시작가 | 종료가 | 수익률(%) | ROE | 영업이익률
+  복합점수 시트: 종목코드 | 종목명 | 시장 | 수익률(%) | ROE | 영업이익률 | 종합점수
 
 의존성: pandas, openpyxl (pip install pandas openpyxl)
 
@@ -26,6 +28,8 @@
   2026-03-19  최초 작성 — Phase 1-4
               stock-scanner/main.py create_excel_report() 기반 재구성
               헤더 스타일(굵게, 배경색) 및 컬럼 너비 자동 조정 추가
+  2026-03-23  복합점수_TOP100 시트 추가 (수익률60+ROE25+영업이익률15 가중합산)
+              엑셀 시트 수 5→6개
 ──────────────────────────────────────────────────────
 """
 
@@ -38,9 +42,15 @@ from openpyxl.utils import get_column_letter
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
-# 전 시트 공통 컬럼 순서
+# 수익률 시트 컬럼
 DISPLAY_COLS = ["종목코드", "종목명", "시작가", "종료가", "수익률(%)",
                 "ROE", "영업이익률"]
+
+# 복합점수 시트 컬럼 (시장 구분 포함, 종합점수 강조)
+SCORE_COLS = ["종목코드", "종목명", "시장", "수익률(%)", "ROE", "영업이익률", "종합점수"]
+
+# 복합점수 시트 헤더 색상 (보라 계열로 구분)
+SCORE_HEADER_FILL = PatternFill(fill_type="solid", fgColor="5B4DB5")
 
 # 헤더 스타일
 HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -72,6 +82,44 @@ def _style_sheet(ws) -> None:
         # 한글 1자 ≈ 2자 너비로 보정, 최소 8 / 최대 30
         adjusted = min(max(max_len * 1.5, 8), 30)
         ws.column_dimensions[get_column_letter(col_idx)].width = adjusted
+
+
+def _write_score_sheet(writer: pd.ExcelWriter, df: pd.DataFrame) -> None:
+    """복합점수_TOP100 시트 작성 — 보라색 헤더 + 종합점수 강조
+
+    Args:
+        writer: pd.ExcelWriter 인스턴스
+        df:     복합점수 순 정렬된 통합 DataFrame
+    """
+    out_cols = [c for c in SCORE_COLS if c in df.columns]
+    out_df = df[out_cols].copy()
+
+    # 순위 컬럼 맨 앞에 추가
+    out_df.insert(0, "순위", range(1, len(out_df) + 1))
+    out_df.to_excel(writer, sheet_name="복합점수_TOP100", index=False)
+
+    ws = writer.sheets["복합점수_TOP100"]
+
+    # 헤더 스타일 (보라 계열)
+    for cell in ws[1]:
+        cell.font = HEADER_FONT
+        cell.fill = SCORE_HEADER_FILL
+        cell.alignment = HEADER_ALIGN
+
+    # 종합점수 컬럼 강조 (마지막 컬럼)
+    score_col_idx = out_df.columns.get_loc("종합점수") + 1 if "종합점수" in out_df.columns else None
+    if score_col_idx:
+        score_fill = PatternFill(fill_type="solid", fgColor="EDE9FF")  # 연보라 배경
+        for row in ws.iter_rows(min_row=2, min_col=score_col_idx, max_col=score_col_idx):
+            for cell in row:
+                cell.fill = score_fill
+                cell.font = Font(bold=True, color="3B1FA3")
+
+    # 컬럼 너비 자동 조정
+    for col_idx, col_cells in enumerate(ws.columns, start=1):
+        max_len = max(
+            (len(str(cell.value)) for cell in col_cells if cell.value), default=0)
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max(max_len * 1.5, 8), 30)
 
 
 def _write_sheet(writer: pd.ExcelWriter,
@@ -114,7 +162,7 @@ def create_excel_report(combined_df: pd.DataFrame,
         watchlist_df: 관심종목 DataFrame (None이면 시트 생략)
 
     Returns:
-        생성된 엑셀 파일 경로
+        생성된 엑셀 파일 경로 (6개 시트)
     """
     os.makedirs(DATA_DIR, exist_ok=True)
     filename = f"report_{start_date}_{end_date}.xlsx"
@@ -137,14 +185,21 @@ def create_excel_report(combined_df: pd.DataFrame,
             # 3. 코스닥_TOP100
             _write_sheet(writer, _by_return(kosdaq_df), "코스닥_TOP100", DISPLAY_COLS)
 
-            # 4. 재진입_포착
+            # 4. 복합점수_TOP100 (combined_df는 이미 종합점수 순 정렬)
+            if not combined_df.empty and "종합점수" in combined_df.columns:
+                _write_score_sheet(writer, combined_df)
+            else:
+                empty = pd.DataFrame({"메시지": ["복합점수 데이터 없음 (분석 재실행 필요)"]})
+                _write_sheet(writer, empty, "복합점수_TOP100")
+
+            # 6. 재진입_포착
             if reentry_df.empty:
                 empty = pd.DataFrame({"메시지": ["해당 기간 재진입 종목 없음"]})
                 _write_sheet(writer, empty, "재진입_포착")
             else:
                 _write_sheet(writer, reentry_df, "재진입_포착")
 
-            # 5. 관심종목 (watchlist_df가 전달된 경우만)
+            # 7. 관심종목 (watchlist_df가 전달된 경우만)
             if watchlist_df is not None:
                 if watchlist_df.empty:
                     empty = pd.DataFrame(
