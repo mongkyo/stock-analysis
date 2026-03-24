@@ -218,6 +218,138 @@ def analysis_run(
         })
 
 
+def _quick_query_from_prices(db, start: str, end: str,
+                              market: str) -> list[_ResultRow] | None:
+    """StockPrice + AnalysisResult 이력만으로 실시간 Top100 계산 (API 0번 호출)
+
+    AnalysisResult가 없는 기간 조회 시 폴백으로 사용.
+    - 가격:       StockPrice (start/end 날짜 근방 실제 매매일 자동 탐색)
+    - ROE/OPM:    해당 종목의 가장 최근 AnalysisResult 값 재사용
+    - 시장 구분:  이전 AnalysisResult 이력에서 코드 → 시장 추론
+
+    Returns:
+        _ResultRow 리스트 (없으면 None)
+    """
+    import pandas as pd
+    from sqlalchemy import func
+    from api.services.analysis_service import _find_cache_dates
+
+    actual_start, actual_end = _find_cache_dates(db, start, end)
+    if not actual_start or not actual_end:
+        return None
+
+    # ── 종가 조회 ─────────────────────────────────────────────
+    start_map: dict[str, tuple[str, int]] = {
+        sp.code: (sp.name, sp.close_price)
+        for sp in db.query(StockPrice)
+                    .filter(StockPrice.date == actual_start).all()
+    }
+    end_map: dict[str, int] = {
+        sp.code: sp.close_price
+        for sp in db.query(StockPrice)
+                    .filter(StockPrice.date == actual_end).all()
+    }
+
+    common = set(start_map) & set(end_map)
+    if not common:
+        return None
+
+    # ── 수익률 계산 ───────────────────────────────────────────
+    rows = []
+    for code in common:
+        name, sp = start_map[code]
+        ep = end_map[code]
+        if sp and ep and sp > 0:
+            rows.append({
+                "code": code, "name": name,
+                "start_price": sp, "end_price": ep,
+                "growth_rate": round((ep - sp) / sp * 100, 2),
+            })
+
+    if not rows:
+        return None
+
+    # ── 이전 분석 이력에서 종목별 ROE/OPM + 시장 구분 ─────────
+    # 종목 코드 → (ROE, op_margin) : 가장 최신 AnalysisResult 값 재사용
+    fin_sq = (
+        db.query(
+            AnalysisResult.code,
+            AnalysisResult.roe,
+            AnalysisResult.op_margin,
+            func.row_number().over(
+                partition_by=AnalysisResult.code,
+                order_by=AnalysisResult.end_date.desc()
+            ).label("rn")
+        ).subquery()
+    )
+    fin_rows = db.query(fin_sq).filter(fin_sq.c.rn == 1).all()
+    fin_map  = {r.code: (r.roe, r.op_margin) for r in fin_rows}
+
+    # 종목 코드 → 시장 (코스피/코스닥): 어느 market 분석에 가장 많이 등장했는지
+    mkt_rows = (
+        db.query(AnalysisResult.code, AnalysisResult.market)
+        .filter(AnalysisResult.market.in_(["코스피", "코스닥"]))
+        .all()
+    )
+    mkt_counter: dict[str, dict[str, int]] = {}
+    for r in mkt_rows:
+        mkt_counter.setdefault(r.code, {}).setdefault(r.market, 0)
+        mkt_counter[r.code][r.market] += 1
+    mkt_map = {
+        code: max(mkts, key=mkts.get)
+        for code, mkts in mkt_counter.items()
+    }
+
+    for row in rows:
+        roe, opm = fin_map.get(row["code"], (None, None))
+        row["roe"]       = roe
+        row["op_margin"] = opm
+        row["stock_market"] = mkt_map.get(row["code"])  # 없으면 None
+
+    # 시장 필터 (코스피/코스닥 탭)
+    if market in ("코스피", "코스닥"):
+        rows = [r for r in rows if r["stock_market"] == market]
+
+    if not rows:
+        return None
+
+    # ── 복합점수 계산 → Top100 ────────────────────────────────
+    FETCH_N = 500
+    TOP_N   = 100
+    rows.sort(key=lambda r: r["growth_rate"], reverse=True)
+    rows = rows[:FETCH_N]
+
+    result_rows = [
+        _ResultRow(
+            _FakeAR(i + 1, r["code"], r["name"],
+                    r["growth_rate"], r["roe"], r["op_margin"],
+                    actual_start, actual_end),
+            r["start_price"], r["end_price"],
+        )
+        for i, r in enumerate(rows)
+    ]
+    result_rows = _recalc_scores(result_rows)
+    return result_rows[:TOP_N]
+
+
+class _FakeAR:
+    """_ResultRow 생성에 필요한 AnalysisResult 인터페이스 모사"""
+    __slots__ = ("rank", "code", "name", "growth_rate", "roe",
+                 "op_margin", "score", "start_date", "end_date")
+
+    def __init__(self, rank, code, name, growth_rate, roe, op_margin,
+                 start_date, end_date):
+        self.rank        = rank
+        self.code        = code
+        self.name        = name
+        self.growth_rate = growth_rate
+        self.roe         = roe
+        self.op_margin   = op_margin
+        self.score       = None
+        self.start_date  = start_date
+        self.end_date    = end_date
+
+
 @router.get("/analysis/result", response_class=HTMLResponse)
 def analysis_result(
     request: Request,
@@ -227,15 +359,25 @@ def analysis_result(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """HTMX 요청 — Top100 테이블 부분 렌더링"""
-    results = _query_results_with_prices(
-        db, start.replace("-", ""), end.replace("-", ""), market)
+    """HTMX 요청 — Top100 테이블 부분 렌더링
+    AnalysisResult 없으면 StockPrice + 이전 재무 이력으로 실시간 계산 (API 0번 호출)
+    """
+    start_n = start.replace("-", "")
+    end_n   = end.replace("-", "")
+
+    results   = _query_results_with_prices(db, start_n, end_n, market)
+    is_live   = False  # 저장된 분석 결과 사용 여부
+
+    if not results:
+        results = _quick_query_from_prices(db, start_n, end_n, market) or []
+        is_live = bool(results)
 
     return templates.TemplateResponse(request, "analysis/partials/table.html", {
         "results": results,
         "market":  market,
         "start":   start,
         "end":     end,
+        "is_live": is_live,  # 템플릿에서 "실시간 조회" 배지 표시용
     })
 
 

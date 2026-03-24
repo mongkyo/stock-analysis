@@ -13,13 +13,16 @@
 {% endif %}
 
 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-  <h2 class="font-semibold text-gray-800">
+  <h2 class="font-semibold text-gray-800 flex items-center gap-2">
     {{ market }} Top100 &nbsp;
     <span class="text-sm font-normal text-gray-500">{{ start }} ~ {{ end }}</span>
+    {% if is_live %}
+    <span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">실시간 조회 · 미저장</span>
+    {% endif %}
   </h2>
   <div class="flex items-center gap-3">
     <span class="text-xs text-gray-400">총 {{ results|length }}건</span>
-    {% if results and not run_msg %}
+    {% if results and not run_msg and not is_live %}
     <a href="/reports" class="text-xs text-blue-600 hover:underline">리포트 목록 →</a>
     {% endif %}
   </div>
