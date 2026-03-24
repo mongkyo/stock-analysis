@@ -162,7 +162,7 @@ class KISClient:
 
     def get_period_price(self, stock_code: str,
                          start_date: str, end_date: str) -> tuple:
-        """기간별 시작가/종료가 조회
+        """기간별 시작가/종료가/평균거래량 조회
 
         Args:
             stock_code: 종목코드 (예: "005930")
@@ -170,7 +170,7 @@ class KISClient:
             end_date:   종료일 (YYYYMMDD)
 
         Returns:
-            (시작 종가, 종료 종가) — 데이터 없으면 (None, None)
+            (시작 종가, 종료 종가, 일평균 거래량) — 데이터 없으면 (None, None, None)
         """
         url = (f"{self.base_url}/uapi/domestic-stock/v1/quotations"
                "/inquire-daily-itemchartprice")
@@ -187,26 +187,34 @@ class KISClient:
                 url, headers=self._header("FHKST03010100"),
                 params=params, timeout=10)
             if resp.status_code != 200:
-                return (None, None)
+                return (None, None, None)
             data = resp.json()
             if data.get("rt_cd") != "0":
-                return (None, None)
+                return (None, None, None)
 
             records = [
                 r for r in data.get("output2", [])
                 if r.get("stck_clpr") and int(r["stck_clpr"]) > 0
             ]
             if len(records) < 2:
-                return (None, None)
+                return (None, None, None)
 
             # output2: 최신일이 앞, 과거일이 뒤
-            end_price = int(records[0]["stck_clpr"])
+            end_price   = int(records[0]["stck_clpr"])
             start_price = int(records[-1]["stck_clpr"])
-            return (start_price, end_price)
+
+            # 기간 내 일평균 거래량
+            volumes = [
+                int(r["acml_vol"]) for r in records
+                if r.get("acml_vol") and int(r["acml_vol"]) > 0
+            ]
+            avg_volume = int(sum(volumes) / len(volumes)) if volumes else None
+
+            return (start_price, end_price, avg_volume)
 
         except Exception as e:
             print(f"  [시세 오류] {stock_code}: {e}")
-            return (None, None)
+            return (None, None, None)
 
     # ── 재무 데이터 ───────────────────────────────────────
 

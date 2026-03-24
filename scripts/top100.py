@@ -38,6 +38,8 @@
   2026-03-23  FETCH_N 300→500, calculate_composite_score() 추가
               수익률60%+ROE25%+영업이익률15% 백분위 가중합산 → 복합점수 Top100 정렬
               엑셀은 수익률 순 유지, 웹 분석 결과만 복합점수 순
+  2026-03-24  거래량 지표 추가 — get_period_price() 일평균거래량 반환
+              가중치: 수익률55%+ROE20%+영업이익률15%+일평균거래량10%
 ──────────────────────────────────────────────────────
 """
 
@@ -69,9 +71,10 @@ MAX_WORKERS = 5             # 병렬 API 호출 스레드 수
 
 # ── 복합 점수 가중치 ────────────────────────────────────────
 SCORE_WEIGHTS = {
-    "수익률(%)": 0.60,   # 모멘텀 (핵심 지표)
-    "ROE":       0.25,   # 자본 효율성
-    "영업이익률": 0.15,  # 사업 안정성
+    "수익률(%)":    0.55,  # 모멘텀 (핵심 지표)
+    "ROE":          0.20,  # 자본 효율성
+    "영업이익률":   0.15,  # 사업 안정성
+    "일평균거래량": 0.10,  # 시장 관심도 (유동성)
 }
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -109,7 +112,7 @@ def fetch_growth_rates(client: KISClient,
         time.sleep(0.05)  # API 부하 분산
 
         try:
-            start_price, end_price = client.get_period_price(
+            start_price, end_price, avg_volume = client.get_period_price(
                 code, start_date, end_date)
 
             with lock:
@@ -126,12 +129,13 @@ def fetch_growth_rates(client: KISClient,
                 print(f"  [{idx}/{total}] {market} 진행 중...")
 
             return {
-                "종목코드": code,
-                "종목명": name,
-                "시장": market,
-                "시작가": start_price,
-                "종료가": end_price,
-                "수익률(%)": growth,
+                "종목코드":    code,
+                "종목명":      name,
+                "시장":        market,
+                "시작가":      start_price,
+                "종료가":      end_price,
+                "수익률(%)":   growth,
+                "일평균거래량": avg_volume,
             }
         except Exception as e:
             with lock:
@@ -467,18 +471,19 @@ def get_watchlist_performance(client: KISClient,
         name = stock["종목명"]
         time.sleep(0.05)
         try:
-            start_price, end_price = client.get_period_price(
+            start_price, end_price, avg_volume = client.get_period_price(
                 code, start_date, end_date)
             if start_price is None or end_price is None or start_price == 0:
                 print(f"  {name}({code}): 시세 데이터 없음")
                 continue
             growth = round((end_price - start_price) / start_price * 100, 2)
             rows.append({
-                "종목코드": code,
-                "종목명": name,
-                "시작가": start_price,
-                "종료가": end_price,
-                "수익률(%)": growth,
+                "종목코드":    code,
+                "종목명":      name,
+                "시작가":      start_price,
+                "종료가":      end_price,
+                "수익률(%)":   growth,
+                "일평균거래량": avg_volume,
             })
         except Exception as e:
             print(f"  {name}({code}) 오류: {e}")
