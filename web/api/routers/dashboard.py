@@ -9,6 +9,7 @@
   GET /reports/download/{filename} → 엑셀 파일 다운로드
 수정 이력:
   2026-03-19  최초 작성
+  2026-03-24  _recalc_scores() 추가 — 조회 시 현재 가중치로 종합점수 실시간 재계산
 ──────────────────────────────────────────────────────
 """
 
@@ -49,9 +50,54 @@ class _ResultRow:
         self.end_price   = end_price   or 0
 
 
+def _recalc_scores(rows: list[_ResultRow]) -> list[_ResultRow]:
+    """DB 조회 결과에 현재 가중치로 종합점수 실시간 재계산 후 재정렬
+
+    AnalysisResult에는 일평균거래량이 없으므로 3개 지표만 사용.
+    SCORE_WEIGHTS에서 가용 지표의 비율로 정규화.
+    """
+    if not rows:
+        return rows
+
+    import pandas as pd
+    # top100.py SCORE_WEIGHTS import (analysis_service가 sys.path 설정)
+    try:
+        from top100 import SCORE_WEIGHTS
+        weights = {k: v for k, v in SCORE_WEIGHTS.items()
+                   if k in ("수익률(%)", "ROE", "영업이익률")}
+        total_w = sum(weights.values())
+        weights = {k: v / total_w for k, v in weights.items()}  # 합계 1.0 정규화
+    except Exception:
+        # import 실패 시 고정값 fallback
+        weights = {"수익률(%)": 0.7368, "ROE": 0.1579, "영업이익률": 0.1053}
+
+    col_map = {"수익률(%)": "growth_rate", "ROE": "roe", "영업이익률": "op_margin"}
+
+    df = pd.DataFrame([
+        {col: getattr(r, attr) for col, attr in col_map.items()}
+        for r in rows
+    ])
+
+    score = pd.Series(0.0, index=df.index)
+    for col, weight in weights.items():
+        series = df[col].copy().astype(float)
+        series = series.fillna(series.median())
+        pct = series.rank(pct=True, method="average") * 100
+        score += pct * weight
+
+    for i, row in enumerate(rows):
+        row.score = round(float(score[i]), 2)
+
+    rows.sort(key=lambda r: r.score, reverse=True)
+    for i, row in enumerate(rows):
+        row.rank = i + 1
+
+    return rows
+
+
 def _query_results_with_prices(db, start: str, end: str, market: str,
                                 limit: int = 100) -> list[_ResultRow]:
-    """AnalysisResult + StockPrice 조인 → _ResultRow 리스트 반환"""
+    """AnalysisResult + StockPrice 조인 → 현재 가중치로 점수 재계산 후 반환"""
     sp_start = aliased(StockPrice)
     sp_end   = aliased(StockPrice)
     rows = (
@@ -71,7 +117,8 @@ def _query_results_with_prices(db, start: str, end: str, market: str,
         .limit(limit)
         .all()
     )
-    return [_ResultRow(ar, sp, ep) for ar, sp, ep in rows]
+    result_rows = [_ResultRow(ar, sp, ep) for ar, sp, ep in rows]
+    return _recalc_scores(result_rows)  # 현재 가중치로 실시간 재계산
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data")
 
