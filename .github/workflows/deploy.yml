@@ -12,12 +12,12 @@ jobs:
     steps:
       - name: 코드 최신화
         run: |
-          cd /Users/mongkyo/Developer/stock-analysis
+          cd /Users/mongkyo-server/Developer/stock-analysis
           git pull origin main
 
       - name: 패키지 설치
         run: |
-          cd /Users/mongkyo/Developer/stock-analysis
+          cd /Users/mongkyo-server/Developer/stock-analysis
           pip3 install -r requirements.txt --quiet
 
       - name: 웹 서버 재시작
