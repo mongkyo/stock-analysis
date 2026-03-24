@@ -54,4 +54,8 @@ async def http_exception_handler(request: Request, exc: FastAPIHTTPException):
         location = exc.headers.get("Location", "/auth/login")
         return RedirectResponse(url=location, status_code=303)
     from fastapi.responses import JSONResponse
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    import json
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=json.loads(json.dumps({"detail": exc.detail}, ensure_ascii=False))
+    )
