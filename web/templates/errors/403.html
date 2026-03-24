@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>접근 권한 없음 — 주식 분석 플랫폼</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center">
+  <div class="text-center">
+    <div class="text-6xl mb-4">🔒</div>
+    <h1 class="text-2xl font-bold text-gray-800 mb-2">접근 권한이 없습니다</h1>
+    <p class="text-gray-500 mb-2">이 페이지는 <span class="font-semibold text-blue-600">{{ required_role }}</span> 이상만 접근할 수 있어요.</p>
+    <p class="text-gray-400 text-sm mb-8">현재 권한: <span class="font-medium">{{ user_role }}</span> · 권한 변경이 필요하면 관리자에게 문의하세요.</p>
+    <a href="/" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg text-sm font-medium transition">
+      대시보드로 돌아가기
+    </a>
+  </div>
+</body>
+</html>

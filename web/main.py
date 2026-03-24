@@ -18,6 +18,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 import os
 
 from api.database import engine, Base
@@ -48,11 +49,32 @@ app.include_router(admin.router)
 # FastAPI 기본 처리는 JSON 반환 → 브라우저 리다이렉트로 변환
 from fastapi.exceptions import HTTPException as FastAPIHTTPException
 
+_templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+
 @app.exception_handler(FastAPIHTTPException)
 async def http_exception_handler(request: Request, exc: FastAPIHTTPException):
     if exc.status_code == 303:
         location = exc.headers.get("Location", "/auth/login")
         return RedirectResponse(url=location, status_code=303)
+
+    if exc.status_code == 403:
+        # 권한 부족 → 403 전용 페이지 렌더링
+        from api.auth import get_current_user
+        from api.database import SessionLocal
+        user_role = "알 수 없음"
+        try:
+            db = SessionLocal()
+            user = get_current_user(request, db)
+            user_role = user.role if user else "비로그인"
+            db.close()
+        except Exception:
+            pass
+        return _templates.TemplateResponse(
+            request, "errors/403.html",
+            {"required_role": "Premium 이상", "user_role": user_role},
+            status_code=403,
+        )
+
     from fastapi.responses import JSONResponse
     import json
     return JSONResponse(
