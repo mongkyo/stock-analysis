@@ -30,6 +30,8 @@
   2026-03-19  최초 작성
   2026-03-23  StockPrice 저장 추가, AnalysisResult 가격 컬럼 제거
   2026-03-24  캐시 로직 추가 — StockPrice 데이터 충분 시 KIS 가격 API 0번 호출
+              _find_cache_dates start 기준 변경: >= → <= (주말→이전 거래일)
+              _fetch_and_save_date() 추가 — 누락 날짜 단독 fetch (시나리오 3)
 ──────────────────────────────────────────────────────
 """
 
@@ -66,7 +68,10 @@ def _get_kis_client():
 
 def _find_cache_dates(db: Session, start: str, end: str,
                       min_stocks: int = 2000) -> tuple[str | None, str | None]:
-    """start/end 날짜 근방에서 StockPrice 데이터가 충분한 실제 매매일 탐색
+    """start/end 날짜 이하(이전 거래일)에서 StockPrice 데이터가 충분한 실제 매매일 탐색
+
+    주말/공휴일이면 그 이전 마지막 거래일로 자동 조정.
+    예: start=20260201(토) → 20260131(금)
 
     Args:
         db:         DB 세션
@@ -80,17 +85,17 @@ def _find_cache_dates(db: Session, start: str, end: str,
     """
     from sqlalchemy import func
 
-    # start 이후 첫 번째 충분한 데이터 날짜 (공휴일 자동 스킵)
+    # start 이하 마지막 거래일 (주말/공휴일 → 이전 거래일)
     row_s = (
         db.query(StockPrice.date)
         .group_by(StockPrice.date)
         .having(func.count(StockPrice.code) >= min_stocks)
-        .filter(StockPrice.date >= start)
-        .order_by(StockPrice.date)
+        .filter(StockPrice.date <= start)
+        .order_by(StockPrice.date.desc())
         .first()
     )
 
-    # end 이전 마지막 충분한 데이터 날짜 (공휴일 자동 스킵)
+    # end 이하 마지막 거래일
     row_e = (
         db.query(StockPrice.date)
         .group_by(StockPrice.date)
@@ -106,6 +111,130 @@ def _find_cache_dates(db: Session, start: str, end: str,
     if s and e and s < e:
         return s, e
     return None, None
+
+
+def _fetch_and_save_date(client, db: Session, date_str: str,
+                         min_stocks: int = 2000) -> str | None:
+    """특정 날짜의 전 종목 종가를 KIS API로 fetch → StockPrice 저장
+
+    캐시에 없는 평일 날짜(시나리오 3)를 처리할 때 사용.
+    daily_price_job과 동일한 로직을 특정 날짜에 대해 수행.
+
+    Args:
+        client:     KISClient 인스턴스
+        db:         DB 세션
+        date_str:   저장할 날짜 (YYYYMMDD)
+        min_stocks: 저장 완료 판정 최소 종목 수
+
+    Returns:
+        실제 저장된 날짜 (공휴일이면 직전 거래일), 실패 시 None
+    """
+    import time
+    import datetime
+    import requests as _req
+    from sqlalchemy import func
+
+    # 이미 충분한 데이터가 있으면 스킵
+    existing = (db.query(func.count(StockPrice.code))
+                .filter(StockPrice.date == date_str)
+                .scalar() or 0)
+    if existing >= min_stocks:
+        print(f"[날짜 fetch] {date_str} 이미 DB에 있음 ({existing:,}개) — skip")
+        return date_str
+
+    print(f"\n[날짜 fetch] {date_str} 전 종목 종가 수집 시작...")
+
+    # 종목 마스터 로드
+    kospi  = client.download_stock_list("J")
+    kosdaq = client.download_stock_list("Q")
+    all_stocks = kospi + kosdaq
+
+    # 해당 날짜 이전 7일간 조회 (공휴일·주말 포함 여부 자동 처리)
+    dt = datetime.datetime.strptime(date_str, "%Y%m%d")
+    week_ago = (dt - datetime.timedelta(days=7)).strftime("%Y%m%d")
+
+    url = (f"{client.base_url}/uapi/domestic-stock/v1/quotations"
+           "/inquire-daily-itemchartprice")
+
+    # 이미 저장된 코드 조회 (중단 후 재시작 시 중복 방지)
+    already = {
+        row.code for row in
+        db.query(StockPrice.code).filter(StockPrice.date == date_str).all()
+    }
+
+    batch: list[StockPrice] = []
+    actual_date: str | None = None  # 실제 저장된 날짜 (공휴일이면 직전 거래일)
+
+    for i, item in enumerate(all_stocks, start=1):
+        code = item["종목코드"]
+        name = item["종목명"]
+
+        if code in already:
+            continue
+
+        time.sleep(0.1)
+
+        try:
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": code,
+                "FID_INPUT_DATE_1": week_ago,
+                "FID_INPUT_DATE_2": date_str,
+                "FID_PERIOD_DIV_CODE": "D",
+                "FID_ORG_ADJ_PRC": "0",
+            }
+            resp = _req.get(url, headers=client._header("FHKST03010100"),
+                            params=params, timeout=10)
+            data = resp.json()
+            records = [r for r in data.get("output2", [])
+                       if r.get("stck_clpr") and int(r["stck_clpr"]) > 0]
+            if not records:
+                continue
+
+            rec_date = records[0].get("stck_bsop_date", date_str)
+            close_price = int(records[0]["stck_clpr"])
+
+            if actual_date is None:
+                actual_date = rec_date  # 첫 성공 종목의 날짜로 확정
+
+            batch.append(StockPrice(
+                code=code, name=name,
+                date=rec_date, close_price=close_price,
+            ))
+
+            # 100개 단위 bulk insert
+            if len(batch) >= 100:
+                try:
+                    db.bulk_save_objects(batch)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    db.bulk_save_objects(batch)
+                    db.commit()
+                batch = []
+
+            if i % 500 == 0:
+                print(f"  [{i}/{len(all_stocks)}] 진행 중...")
+
+        except Exception as e:
+            print(f"  [{code}] 오류: {e}")
+
+    # 남은 배치 저장
+    if batch:
+        try:
+            db.bulk_save_objects(batch)
+            db.commit()
+        except Exception:
+            db.rollback()
+            db.bulk_save_objects(batch)
+            db.commit()
+
+    if actual_date:
+        count = (db.query(func.count(StockPrice.code))
+                 .filter(StockPrice.date == actual_date).scalar() or 0)
+        print(f"[날짜 fetch] 완료 — {actual_date} {count:,}개 저장")
+
+    return actual_date
 
 
 def _run_from_cache(db: Session,
@@ -343,6 +472,20 @@ def run_analysis(db: Session, start: str, end: str) -> dict:
 
     from top100 import find_reentry_stocks, load_prev_combined
     from report import create_excel_report
+
+    # ── 누락 날짜 보완: DB에 없는 평일 날짜만 KIS API로 단독 fetch ──────
+    # 먼저 KIS 클라이언트 준비 (누락 날짜 있을 때만 실제 사용)
+    def _ensure_date(date_str: str) -> None:
+        """날짜가 StockPrice에 없으면 KIS API로 fetch하여 저장"""
+        from sqlalchemy import func as _f
+        cnt = (db.query(_f.count(StockPrice.code))
+               .filter(StockPrice.date == date_str).scalar() or 0)
+        if cnt < 2000:
+            client = _get_kis_client()
+            _fetch_and_save_date(client, db, date_str)
+
+    _ensure_date(start)
+    _ensure_date(end)
 
     # ── 캐시 체크: StockPrice에 충분한 데이터가 있으면 KIS 가격 API 스킵 ──
     actual_start, actual_end = _find_cache_dates(db, start, end)
