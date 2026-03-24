@@ -1,193 +1,370 @@
-# TASKS.md — 작업 현황 및 명세
+# TASKS.md — 프로젝트 전체 현황 명세서
 
-> **사용법**: 새 Claude CLI 세션 시작 시 아래 템플릿으로 요청
+> **새 Claude 세션 시작 시 요청 템플릿**
 > ```
 > CLAUDE.md와 TASKS.md를 읽고 [오늘 할 작업]을 진행해줘.
 > ```
 
 ---
 
-## 전체 Phase 현황
+## 전체 구현 현황 (2026-03-24 기준)
 
-| Phase | 내용 | 상태 |
-|-------|------|------|
-| 0 | 환경 세팅 (Python, Git, API 키) | ✅ 완료 |
-| 1 | 핵심 스크립트 작성 | ✅ 완료 |
-| 2 | 실데이터 테스트 | ⏳ KIS/텔레그램 키 준비 후 |
-| 3 | 골든크로스 감지 | ✅ 완료 |
-| 4 | 텔레그램 알림 | ✅ 완료 |
-| 5 | APScheduler 자동화 | ✅ 완료 |
-| 6 | FastAPI 웹 개발 | 🔨 진행 중 (맥북에어 개발) |
-| 7 | 맥미니 배포 (Docker + CI/CD) | ⏳ 맥미니 도착 후 (4월 1주차) |
+| 영역 | 상태 |
+|------|------|
+| KIS API 클라이언트 | ✅ 완료 |
+| Top100 분석 스크립트 | ✅ 완료 |
+| 엑셀 리포트 생성 | ✅ 완료 |
+| 골든크로스 감지 + 텔레그램 알림 | ✅ 완료 |
+| APScheduler 자동화 | ✅ 완료 |
+| FastAPI 웹 (인증/대시보드/분석/관심종목/관리자) | ✅ 완료 |
+| StockPrice 일별 전 종목 종가 저장 | ✅ 완료 |
+| 복합점수 기반 Top100 (백분위 가중합산) | ✅ 완료 |
+| 분석 캐시 로직 (KIS 가격 API 재호출 없음) | ✅ 완료 |
+| 누락 날짜 단독 fetch (시나리오 3) | ✅ 완료 |
+| 실시간 조회 (분석 미실행 기간) | ✅ 완료 |
+| GitHub Actions + self-hosted runner 자동 배포 | ✅ 완료 |
+| Cloudflare 터널 (stock.upwaves.org) | ✅ 완료 |
+| 맥북프로 서버 launchd 자동실행 | ✅ 완료 |
+| 분석 실행 백그라운드 + 폴링 | ⏳ 미구현 (탭 닫으면 중단 이슈) |
+| 맥미니 Docker 이전 | ⏳ 4월 1주차 도착 후 |
 
 ---
 
-## Phase 1 완료 — 핵심 스크립트
+## 서버 / 배포 정보
 
-### 파일 목록
+| 항목 | 내용 |
+|------|------|
+| 개발 환경 | 맥북에어 (로컬) |
+| 운영 서버 | 맥북프로 사무실 `/Users/mongkyo-server/Developer/stock-analysis` |
+| 도메인 | stock.upwaves.org (Cloudflare Tunnel) |
+| Python | `/usr/local/bin/python3.11` |
+| DB | PostgreSQL (Homebrew), DB명: stock_analysis |
+| 배포 방식 | git push → GitHub Actions self-hosted runner → uvicorn 재시작 |
+| 서버 서비스 | launchd: `com.stock.uvicorn`(포트 8000), `com.stock.cloudflared`, `actions.runner` |
+| 슬립 방지 | `sudo pmset -a sleep 0` |
+
+### 자동 배포 흐름
+```
+맥북에어에서 git push
+  → GitHub Actions (.github/workflows/deploy.yml)
+  → self-hosted runner (맥북프로)
+  → git pull → pip install → uvicorn 재시작
+  → stock.upwaves.org 반영
+```
+
+---
+
+## 프로젝트 구조 및 주요 파일
+
 ```
 stock-analysis/
+├── CLAUDE.md               # 프로젝트 컨텍스트 (Claude 지시사항)
+├── TASKS.md                # 이 파일
+├── .env                    # API 키 (git 제외)
+├── requirements.txt        # pip 의존성
+│
 ├── scripts/
-│   ├── kis_api.py          ✅ KIS API 클라이언트
-│   │     KISClient 클래스: 토큰 발급, 시세, 재무(ROE/영업이익률), 30분봉
-│   │     add_financial_data(): 병렬 재무 조회
-│   ├── top100.py           ✅ Top100 추출 메인 로직
-│   │     get_top100(client, start, end, market_code, limit)
-│   │     get_combined_top100(client, start, end, limit)
-│   │     filter_by_financials(df) — ROE/영업이익률 필터
-│   │     find_reentry_stocks(prev_df, curr_df) — 재진입 포착
-│   │     get_watchlist_performance(client, start, end)
-│   ├── report.py           ✅ 엑셀 5시트 생성
-│   │     create_excel_report(combined, kospi, kosdaq, reentry, start, end)
-│   │     시트: 통합/코스피/코스닥 TOP100, 재진입_포착, 관심종목
-│   ├── golden_cross.py     ✅ 골든크로스 감지
-│   │     scan_watchlist(client) — MA3/MA5 상향돌파 감지
-│   │     load/save/add/remove_watchlist()
-│   └── notifier.py         ✅ 텔레그램 알림
-│         send_golden_cross_alert(signals)
-│         send_daily_report(kospi_df, kosdaq_df, reentry_df, excel_path, start, end)
-└── scheduler/
-    └── jobs.py             ✅ APScheduler
-          scan_job()  — 평일 09:00~15:30 30분 간격
-          report_job() — 매일 21:00 KST
+│   ├── kis_api.py          # KIS API 클라이언트
+│   ├── top100.py           # Top100 분석 메인 로직
+│   ├── report.py           # 엑셀 리포트 생성 (6시트)
+│   ├── golden_cross.py     # 골든크로스 감지 (MA3/MA5)
+│   └── notifier.py         # 텔레그램 알림
+│
+├── scheduler/
+│   └── jobs.py             # APScheduler 자동화 작업
+│
+└── web/
+    ├── main.py             # FastAPI 진입점
+    ├── create_admin.py     # admin 계정 초기 생성 CLI
+    ├── alembic/            # DB 마이그레이션
+    ├── api/
+    │   ├── config.py       # 환경변수 중앙 관리
+    │   ├── database.py     # SQLAlchemy 설정
+    │   ├── auth.py         # JWT + bcrypt 인증
+    │   ├── models/
+    │   │   ├── user.py     # User, WatchlistItem
+    │   │   └── stock.py    # AnalysisResult, StockPrice, GoldenCrossLog
+    │   ├── routers/
+    │   │   ├── auth.py     # /auth/login, /auth/logout
+    │   │   ├── dashboard.py # /, /analysis, /reports
+    │   │   ├── watchlist.py # /watchlist
+    │   │   └── admin.py    # /admin/users
+    │   └── services/
+    │       └── analysis_service.py  # 분석 실행 서비스 (핵심)
+    └── templates/
+        ├── base.html
+        ├── auth/login.html
+        ├── dashboard/index.html
+        ├── dashboard/reports.html
+        ├── analysis/index.html
+        ├── analysis/partials/table.html
+        ├── watchlist/index.html
+        ├── watchlist/partials/list.html
+        ├── admin/users.html
+        └── errors/403.html
 ```
 
-### 실행 방법 (Phase 2 테스트)
+---
+
+## DB 스키마
+
+### users
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int PK | |
+| email | str unique | 로그인 ID |
+| name | str | 표시명 |
+| hashed_password | str | bcrypt |
+| role | enum | admin / premium / basic |
+| auth_provider | str | local (OAuth 확장 예비) |
+| is_active | bool | 계정 활성화 여부 |
+| created_at | datetime | |
+
+### watchlist_items
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int PK | |
+| user_id | FK → users | |
+| code | str | 종목코드 6자리 |
+| name | str | 종목명 |
+| created_at | datetime | |
+
+### analysis_results
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int PK | |
+| start_date | str | 분석 시작일 YYYYMMDD |
+| end_date | str | 분석 종료일 YYYYMMDD |
+| market | str | 통합 / 코스피 / 코스닥 |
+| rank | int | 순위 |
+| code | str | 종목코드 |
+| name | str | 종목명 |
+| growth_rate | float | 수익률(%) |
+| roe | float\|null | ROE |
+| op_margin | float\|null | 영업이익률 |
+| score | float\|null | 복합점수 (저장 시점 가중치 기준) |
+| created_at | datetime | |
+
+> **주의**: score는 저장 시점 가중치 기준. 조회 시 `_recalc_scores()`로 현재 가중치로 재계산.
+> start_price / end_price 컬럼은 제거됨 → StockPrice 테이블에서 JOIN으로 조회.
+
+### stock_prices
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int PK | |
+| code | str | 종목코드 |
+| name | str | 종목명 |
+| date | str | 날짜 YYYYMMDD |
+| close_price | int | 종가 |
+| created_at | datetime | |
+| UNIQUE | (code, date) | 중복 방지 |
+
+> **역할**: KIS 가격 API 재호출 없이 수익률 계산을 위한 원본 데이터 저장소.
+> daily_price_job이 매일 15:35 전 종목(~2,500개) 저장.
+
+### golden_cross_logs
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | int PK | |
+| code | str | 종목코드 |
+| name | str | 종목명 |
+| price | int | 감지 시점 가격 |
+| ma3 | float | 3봉 이동평균 |
+| ma5 | float | 5봉 이동평균 |
+| detected_at | datetime | 감지 시각 |
+
+---
+
+## 핵심 로직 설명
+
+### 복합점수 산정 (top100.py)
+```python
+SCORE_WEIGHTS = {
+    "수익률(%)":    0.70,  # 모멘텀
+    "ROE":          0.15,  # 자본 효율성
+    "영업이익률":   0.10,  # 사업 안정성
+    "일평균거래량": 0.05,  # 유동성
+}
+```
+- 각 지표를 그룹 내 백분위(0~100)로 정규화 후 가중합산
+- None/NaN → 중앙값 대체 (중립 처리)
+- FETCH_N=500: 수익률 상위 500 추출 → 재무조회 → 복합점수 정렬 → Top100
+
+### 분석 실행 흐름 (analysis_service.py)
+
+```
+run_analysis(db, start, end)
+  │
+  ├─ _ensure_date(start) ← start 날짜 StockPrice에 없으면 KIS API fetch + 저장
+  ├─ _ensure_date(end)   ← end 날짜 StockPrice에 없으면 KIS API fetch + 저장
+  │
+  ├─ _find_cache_dates(db, start, end)
+  │    ├─ start 이하 최신 거래일 탐색 (주말/공휴일 → 이전 거래일)
+  │    └─ end 이하 최신 거래일 탐색
+  │
+  ├─ 캐시 가능하면 → _run_from_cache()
+  │    ├─ StockPrice에서 start/end 종가 조회 → 수익률 계산
+  │    ├─ 종목 마스터 zip 다운로드 (코스피/코스닥 구분)
+  │    ├─ KIS 재무 API 호출 (ROE/OPM, 여전히 필요)
+  │    └─ 복합점수 계산 → Top100 반환  [KIS 가격 API 0번 호출]
+  │
+  └─ 캐시 불가하면 → get_combined_top100(client, start, end)
+       └─ 기존 방식 (전 종목 KIS 가격 API 호출, 30~40분 소요)
+```
+
+### 조회 흐름 (dashboard.py)
+
+```
+GET /analysis/result?start=&end=&market=
+  │
+  ├─ _query_results_with_prices() → AnalysisResult + StockPrice JOIN
+  │    └─ 결과 있으면 → _recalc_scores() (현재 가중치로 점수 재계산)
+  │
+  └─ 결과 없으면 → _quick_query_from_prices()  [API 0번 호출]
+       ├─ _find_cache_dates() → 실제 매매일 탐색
+       ├─ StockPrice에서 종가 조회 → 수익률 계산
+       ├─ 이전 AnalysisResult에서 ROE/OPM 재사용 (가장 최근 값)
+       ├─ 이전 AnalysisResult 이력에서 코스피/코스닥 구분 추론
+       └─ _recalc_scores() → Top100 반환 + is_live=True (배지 표시)
+```
+
+### 실시간 점수 재계산 (_recalc_scores)
+- DB 조회 후 항상 현재 SCORE_WEIGHTS로 재계산
+- DB의 score 컬럼 값은 무시 (저장 시점 가중치와 다를 수 있음)
+- 일평균거래량은 DB에 없으므로 나머지 3개 지표(수익률/ROE/OPM)의 비율로 정규화
+
+---
+
+## 자동화 스케줄 (scheduler/jobs.py)
+
+| 작업 | 실행 시간 | 내용 |
+|------|----------|------|
+| scan_job | 평일 09:00~15:30 (30분 간격) | 관심종목 골든크로스 감지 → 텔레그램 알림 → GoldenCrossLog DB 저장 |
+| report_job | 매일 21:00 KST | Top100 분석 → 엑셀 생성 → 텔레그램 리포트 발송 |
+| daily_price_job | 평일 15:35 KST | 전 종목(~2,500개) 종가 → StockPrice DB 저장 |
+
+### 수동 실행
 ```bash
-# 1. .env 작성 (stock-analysis/.env)
+cd stock-analysis
+python scheduler/jobs.py --now scan    # 골든크로스 스캔
+python scheduler/jobs.py --now report  # 리포트 생성
+python scheduler/jobs.py --now price   # 오늘 종가 저장
+```
+
+---
+
+## 엑셀 리포트 시트 구조 (report.py)
+
+| 시트명 | 내용 | 정렬 기준 |
+|--------|------|----------|
+| 통합_TOP100 | 코스피+코스닥 전체 | 수익률 내림차순 |
+| 코스피_TOP100 | 코스피 단독 | 수익률 내림차순 |
+| 코스닥_TOP100 | 코스닥 단독 | 수익률 내림차순 |
+| 복합점수_TOP100 | 통합 복합점수 기준 | 종합점수 내림차순 |
+| 재진입_포착 | 이전달 51위↓ → 이번달 Top100 | 현재순위 |
+| 관심종목 | watchlist.json 기간 수익률 | 수익률 내림차순 |
+
+컬럼: 종목코드 \| 종목명 \| 시장 \| 시작가 \| 종료가 \| 수익률(%) \| ROE \| 영업이익률 \| (종합점수)
+
+---
+
+## 권한 체계
+
+| 역할 | 접근 가능 페이지 |
+|------|----------------|
+| admin | 전체 + 분석 실행 + 관리자 페이지 |
+| premium | 대시보드, 분석 조회, 리포트 다운로드, 관심종목 |
+| basic | 대시보드, 분석 조회, 관심종목 |
+| 미로그인 | 로그인 페이지로 리다이렉트 |
+
+---
+
+## 웹 엔드포인트 목록
+
+| Method | URL | 권한 | 설명 |
+|--------|-----|------|------|
+| GET | / | 로그인 | 대시보드 (Top5 + 골든크로스 신호) |
+| GET | /analysis | basic+ | Top100 분석 페이지 |
+| GET | /analysis/result | basic+ | HTMX: DB 조회 or 실시간 계산 |
+| POST | /analysis/run | admin | HTMX: KIS API 분석 실행 + 저장 |
+| GET | /reports | premium+ | 엑셀 리포트 목록 |
+| GET | /reports/download/{filename} | premium+ | 엑셀 다운로드 |
+| GET | /watchlist | basic+ | 관심종목 페이지 |
+| POST | /watchlist | basic+ | 관심종목 추가 |
+| DELETE | /watchlist/{code} | basic+ | 관심종목 삭제 |
+| GET | /admin/users | admin | 사용자 관리 |
+| POST | /admin/users/{id}/role | admin | 권한 변경 |
+| GET | /auth/login | 전체 | 로그인 페이지 |
+| POST | /auth/login | 전체 | 로그인 처리 |
+| GET | /auth/logout | 로그인 | 로그아웃 |
+
+---
+
+## Alembic 마이그레이션 이력
+
+| 파일 | 내용 |
+|------|------|
+| 001_add_stock_prices_remove_price_columns.py | stock_prices 테이블 생성, analysis_results에서 start_price/end_price 제거 |
+| 002_add_score_column.py | analysis_results에 score 컬럼 추가 |
+
+### 서버에서 마이그레이션 실행
+```bash
+cd /Users/mongkyo-server/Developer/stock-analysis/web
+alembic upgrade head
+```
+
+---
+
+## 환경변수 (.env)
+
+```
 KIS_APP_KEY=...
 KIS_APP_SECRET=...
 KIS_ACCOUNT_NO=...
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
-
-# 2. 패키지 설치
-pip install pandas openpyxl requests python-dotenv apscheduler
-
-# 3. 단발 테스트
-python scripts/top100.py 20260101 20260228 --limit 10
-python scheduler/jobs.py --now scan    # 관심종목 추가 후
-python scheduler/jobs.py --now report
-
-# 4. 상시 실행
-python scheduler/jobs.py
+DATABASE_URL=postgresql://localhost/stock_analysis
+SECRET_KEY=...  # JWT 서명 키
 ```
 
 ---
 
-## Phase 6 — FastAPI 웹 개발 (진행 중)
+## 알려진 이슈 및 다음 작업
 
-### 기술 스택
-- FastAPI + Jinja2 템플릿
-- HTMX (페이지 전환 없이 부분 갱신)
-- Tailwind CSS (CDN, 빌드 불필요)
-- Alpine.js (날짜 선택 등 간단한 상태관리)
-- PostgreSQL 15 (Homebrew 설치) + SQLAlchemy 2.0
-- JWT 인증 (python-jose) + bcrypt (직접 사용, passlib 미사용)
+### 🔴 잠재적 문제
+- **분석 실행 타임아웃**: 전체 KIS API 분석은 30~40분 소요. 브라우저 탭 유지 필요.
+  → 해결책: 백그라운드 작업(Celery/BackgroundTasks) + 폴링 방식으로 전환 필요
 
-### 서버 실행
+### 🟡 다음에 할 작업 (우선순위 순)
+1. **분석 실행 백그라운드화**: FastAPI BackgroundTasks + 진행률 SSE/폴링
+2. **맥미니 Docker 이전**: 4월 1주차 도착 후 Docker Compose로 전환
+3. **관심종목 골든크로스 웹 연동**: 스캔 결과를 웹 대시보드에 실시간 표시
+4. **사용자 자체 가입/승인 플로우**: 현재 admin이 CLI로만 계정 생성 가능
+
+### ✅ 최근 완료 (이번 세션)
+- 복합점수 가중치 조정: 수익률 55→70%, ROE 20→15%, OPM 15→10%, 거래량 10→5%
+- 조회 시 현재 가중치로 점수 실시간 재계산 (`_recalc_scores`)
+- 분석 미실행 기간 실시간 조회 (`_quick_query_from_prices`, API 0번 호출)
+- 주말/공휴일 → 이전 거래일 자동 조정 (`_find_cache_dates` 수정)
+- 누락 날짜 단독 fetch (`_fetch_and_save_date`)
+- StockPrice 캐시 로직 구현 (`_run_from_cache`, `_find_cache_dates`)
+- 403 권한 없음 전용 에러 페이지
+- GitHub Actions self-hosted runner 자동 배포 완성
+- 맥북프로 서버 launchd + Cloudflare 터널 세팅 완료
+
+---
+
+## 로컬 개발 시작
+
 ```bash
+# PostgreSQL 시작
+brew services start postgresql@15
+
+# 웹 서버 실행
 cd stock-analysis/web
-python3.11 create_admin.py    # 최초 1회만 — admin 계정 생성
 uvicorn main:app --reload --port 8000
-# 접속: http://localhost:8000
-# 계정: admin / admin1234!
-```
 
-### 완료된 파일
-```
-web/
-├── main.py                 ✅ FastAPI 앱 진입점 + 라우터 등록 + DB 초기화
-├── create_admin.py         ✅ 관리자 계정 생성 스크립트
-├── alembic/                ✅ DB 마이그레이션 설정
-│   └── env.py              (DATABASE_URL + 모델 메타데이터 연결)
-├── api/
-│   ├── database.py         ✅ SQLAlchemy 설정 (PostgreSQL)
-│   ├── auth.py             ✅ JWT 발급/검증 + bcrypt 비밀번호 + 의존성 주입
-│   ├── models/
-│   │   ├── user.py         ✅ User (admin/premium/basic) + watchlist 관계
-│   │   └── stock.py        ✅ AnalysisResult, WatchlistItem, GoldenCrossLog
-│   └── routers/
-│       ├── auth.py         ✅ GET/POST /auth/login, GET /auth/logout
-│       ├── dashboard.py    ✅ GET /, /analysis, /analysis/result, /reports, /reports/download
-│       └── watchlist.py    ✅ GET/POST /watchlist, DELETE /watchlist/{code}
-└── templates/
-    ├── base.html           ✅ 사이드바 + 헤더 레이아웃
-    ├── auth/login.html     ✅ 로그인 페이지 (standalone)
-    ├── dashboard/
-    │   ├── index.html      ✅ 대시보드 (요약 카드 + Top5 + 골든크로스)
-    │   └── reports.html    ✅ 리포트 다운로드 목록
-    ├── analysis/
-    │   ├── index.html      ✅ Top100 분석 (기간 선택 버튼 + HTMX 조회)
-    │   └── partials/table.html  ✅ Top100 결과 테이블 (HTMX 부분 렌더링)
-    └── watchlist/
-        ├── index.html      ✅ 관심종목 페이지
-        └── partials/list.html   ✅ 관심종목 목록 (HTMX)
-```
-
----
-
-## Phase 6 — 남은 작업 (다음 세션에서 진행)
-
-### ✅ 완료: 분석 실행 → DB 저장 연결 (방법 A)
-
-**구현 내용:**
-- `web/api/config.py` — 환경변수 중앙 관리 (KIS 키, DB URL, JWT 키 등)
-- `web/api/services/analysis_service.py` — KIS API 호출 → DB upsert 서비스
-- `POST /analysis/run` — admin 전용 엔드포인트 (require_role(admin) 보호)
-- 분석 실행 버튼 — admin 로그인 시에만 표시 (premium/basic은 조회만 가능)
-- 로딩 스피너 — 분석 중 상태 표시
-- 에러 처리 — KIS 키 미설정, API 오류 시 에러 메시지 표시
-
-**사용 방법:**
-1. `.env`에 KIS_APP_KEY, KIS_APP_SECRET, KIS_ACCOUNT_NO 입력
-2. admin으로 로그인 → `/analysis` → 기간 선택 → `⚡ 분석 실행`
-3. 완료 후 결과 테이블 자동 표시 (DB에 저장됨)
-4. 이후 premium/basic 사용자도 같은 기간 `조회` 가능
-
----
-
-### 🟡 남은 작업 (우선순위 순)
-
-1. **관리자 페이지** — 사용자 목록/권한 변경 (`/admin/users`)
-   - 현재 계정 생성은 `create_admin.py` CLI로만 가능
-   - 웹에서 premium/basic 계정 추가·비활성화 기능 필요
-2. **Alembic 마이그레이션** — 현재 `Base.metadata.create_all()`로 동작 중
-   - 운영 환경(맥미니)에서는 Alembic 권장
-   - `alembic revision --autogenerate -m "init"` + `alembic upgrade head`
-3. **스케줄러 DB 연동** — `scheduler/jobs.py` report_job()에서도 DB 저장
-   - 21:00 자동 분석 결과가 웹에도 반영되게 연결
-
----
-
-## 주요 결정사항 메모
-
-| 항목 | 결정 |
-|------|------|
-| 재무데이터 출처 | DART 제거 → KIS API로 통합 |
-| 알림 채널 | 텔레그램 우선 (카카오는 장기) |
-| DB | PostgreSQL 15 (Homebrew, Docker 없이) |
-| 웹 프레임워크 | FastAPI + HTMX + Tailwind + Alpine.js |
-| 비밀번호 해시 | bcrypt 직접 사용 (passlib은 bcrypt 5.x 비호환) |
-| 배포 환경 | 맥미니 (4월 1주차 도착) + Docker Compose |
-| CI/CD | GitHub Actions (맥미니 도착 후) |
-| 필터 기준 | 이사님과 협의 후 확정 예정 |
-
----
-
-## Claude 요청 템플릿 (복붙용)
-
-```
-CLAUDE.md와 TASKS.md를 읽고 아래 작업을 진행해줘.
-
-[오늘 작업]
-Phase 6 남은 작업 중 "방법 A — 웹에서 직접 분석 실행" 구현
-- /analysis/run 엔드포인트 추가
-- analysis_service.py 작성 (KIS API → DB upsert)
-- 분석 실행 버튼 + 로딩 UI 추가
-
-[참고]
-- web/api/routers/dashboard.py: 현재 엔드포인트 확인
-- web/api/models/stock.py: AnalysisResult 모델 확인
-- scripts/top100.py: 분석 로직 참고
+# 스케줄러 실행 (별도 터미널)
+cd stock-analysis
+python scheduler/jobs.py
 ```
