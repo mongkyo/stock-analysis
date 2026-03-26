@@ -196,7 +196,10 @@ def _bulk_insert_prices(db: Session, rows: list[dict]) -> None:
 
 
 def _fetch_and_save_date(client, db: Session, date_str: str,
-                         min_stocks: int = 2000) -> str | None:
+                         min_stocks: int = 2000,
+                         on_progress=None,
+                         pct_start: int = 5,
+                         pct_end: int = 15) -> str | None:
     """특정 날짜의 전 종목 종가를 KIS API로 fetch → StockPrice 저장
 
     캐시에 없는 평일 날짜(시나리오 3)를 처리할 때 사용.
@@ -244,8 +247,9 @@ def _fetch_and_save_date(client, db: Session, date_str: str,
         db.query(StockPrice.code).filter(StockPrice.date == date_str).all()
     }
 
-    batch: list[StockPrice] = []
+    batch: list[dict] = []
     actual_date: str | None = None  # 실제 저장된 날짜 (공휴일이면 직전 거래일)
+    total = len(all_stocks)
 
     for i, item in enumerate(all_stocks, start=1):
         code = item["종목코드"]
@@ -291,8 +295,13 @@ def _fetch_and_save_date(client, db: Session, date_str: str,
                 _bulk_insert_prices(db, batch)
                 batch = []
 
+            # 진행률 업데이트 (100종목마다)
+            if on_progress and i % 100 == 0:
+                pct = pct_start + int((i / total) * (pct_end - pct_start))
+                on_progress(f"종가 수집 중... {i:,}/{total:,}", pct)
+
             if i % 500 == 0:
-                print(f"  [{i}/{len(all_stocks)}] 진행 중...")
+                print(f"  [{i}/{total}] 진행 중...")
 
         except Exception as e:
             print(f"  [{code}] 오류: {e}")
@@ -571,19 +580,22 @@ def run_analysis(db: Session, start: str, end: str, on_progress=None) -> dict:
     from report import create_excel_report
 
     # ── 누락 날짜 보완: DB에 없는 평일 날짜만 KIS API로 단독 fetch ──────
-    def _ensure_date(date_str: str, label: str, pct: int) -> None:
+    def _ensure_date(date_str: str, label: str,
+                     pct_start: int, pct_end: int) -> None:
         from sqlalchemy import func as _f
         cnt = (db.query(_f.count(StockPrice.code))
                .filter(StockPrice.date == date_str).scalar() or 0)
         if cnt < 2000:
-            _p(f"{label} 데이터 수집 중... (KIS API)", pct)
+            _p(f"{label} 종가 수집 중... (KIS API)", pct_start)
             client = _get_kis_client()
-            _fetch_and_save_date(client, db, date_str)
+            _fetch_and_save_date(client, db, date_str,
+                                 on_progress=on_progress,
+                                 pct_start=pct_start, pct_end=pct_end)
         else:
-            _p(f"{label} 데이터 확인 완료 (DB 캐시)", pct)
+            _p(f"{label} 데이터 확인 완료 (DB 캐시)", pct_end)
 
-    _ensure_date(start, "시작일", 5)
-    _ensure_date(end,   "종료일", 15)
+    _ensure_date(start, "시작일", pct_start=5,  pct_end=20)
+    _ensure_date(end,   "종료일", pct_start=20, pct_end=35)
 
     # ── 캐시 체크: StockPrice에 충분한 데이터가 있으면 KIS 가격 API 스킵 ──
     _p("캐시 확인 중...", 25)
