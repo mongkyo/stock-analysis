@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.stock.scheduler</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/python3.11</string>
+    <string>/Users/mongkyo-server/Developer/stock-analysis/scheduler/jobs.py</string>
+  </array>
+
+  <!-- 서버 부팅 시 자동 시작 -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- 종료되면 자동 재시작 -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- 로그 -->
+  <key>StandardOutPath</key>
+  <string>/Users/mongkyo-server/logs/scheduler.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/mongkyo-server/logs/scheduler_error.log</string>
+
+  <!-- 환경변수: .env 대신 직접 지정 (launchd는 shell 환경 미상속) -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>/Users/mongkyo-server/Developer/stock-analysis/web</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/mongkyo-server/Developer/stock-analysis</string>
+</dict>
+</plist>

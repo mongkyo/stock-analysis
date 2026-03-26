@@ -27,10 +27,15 @@ jobs:
 
       - name: 웹 서버 재시작
         run: |
-          # launchd 서비스로 등록된 uvicorn 재시작
           launchctl stop com.stock.uvicorn || true
           sleep 1
           launchctl start com.stock.uvicorn
+
+      - name: 스케줄러 재시작
+        run: |
+          launchctl stop com.stock.scheduler || true
+          sleep 1
+          launchctl start com.stock.scheduler
 
       - name: 배포 완료 확인
         run: |
