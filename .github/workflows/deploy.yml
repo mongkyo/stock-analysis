@@ -20,6 +20,11 @@ jobs:
           cd /Users/mongkyo-server/Developer/stock-analysis
           pip3 install -r requirements.txt --quiet
 
+      - name: DB 마이그레이션
+        run: |
+          cd /Users/mongkyo-server/Developer/stock-analysis/web
+          /usr/local/bin/python3.11 -m alembic upgrade head
+
       - name: 웹 서버 재시작
         run: |
           # launchd 서비스로 등록된 uvicorn 재시작
