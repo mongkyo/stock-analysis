@@ -16,7 +16,7 @@
 import os
 import glob
 from fastapi import APIRouter, Depends, Request, Query
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -176,46 +176,70 @@ def analysis_page(
     })
 
 
-@router.post("/analysis/run", response_class=HTMLResponse)
+@router.post("/analysis/run")
 def analysis_run(
-    request: Request,
     start: str = Query(...),
     end:   str = Query(...),
+    user: User = Depends(require_role(UserRole.admin)),
+):
+    """분석 백그라운드 시작 (admin 전용) → job_id 반환"""
+    from api.services.analysis_service import start_analysis_job
+    job_id = start_analysis_job(start, end)
+    return JSONResponse({"job_id": job_id})
+
+
+@router.get("/analysis/progress/{job_id}")
+def analysis_progress(
+    job_id: str,
+    user: User = Depends(get_current_user),
+):
+    """분석 진행 상태 폴링"""
+    from api.services.analysis_service import get_job_status
+    status = get_job_status(job_id)
+    if status is None:
+        return JSONResponse({"status": "not_found", "message": "작업을 찾을 수 없습니다", "percent": 0})
+    return JSONResponse({
+        "status":  status["status"],
+        "message": status["message"],
+        "percent": status["percent"],
+        "error":   status.get("error"),
+    })
+
+
+@router.get("/analysis/progress/{job_id}/result", response_class=HTMLResponse)
+def analysis_progress_result(
+    request: Request,
+    job_id: str,
+    start:  str = Query(...),
+    end:    str = Query(...),
     market: str = Query("통합"),
     db: Session = Depends(get_db),
-    user: User = Depends(require_role(UserRole.admin)),  # admin 전용
+    user: User = Depends(get_current_user),
 ):
-    """분석 실행 (admin 전용, HTMX 요청)
-    KIS API 호출 → DB 저장 → 결과 테이블 반환
-    """
-    from fastapi.responses import HTMLResponse as HR
+    """분석 완료 후 결과 테이블 반환"""
+    start_n = start.replace("-", "")
+    end_n   = end.replace("-", "")
+    results = _query_results_with_prices(db, start_n, end_n, market)
 
-    try:
-        result = run_analysis(db, start, end)
-        # 저장 완료 후 해당 기간 통합 결과 조회
-        results = _query_results_with_prices(
-            db, start.replace("-", ""), end.replace("-", ""), market)
-        import os
-        excel_name = os.path.basename(result["excel_path"]) if result.get("excel_path") else None
-        run_msg = f"분석 완료 — {result['saved']}건 저장"
-        if excel_name:
-            run_msg += f" · 엑셀 저장됨 ({excel_name})"
-        return templates.TemplateResponse(request, "analysis/partials/table.html", {
-            "results":    results,
-            "market":     market,
-            "start":      start,
-            "end":        end,
-            "run_msg":    run_msg,
-            "excel_name": excel_name,
-        })
-    except ValueError as e:
-        return templates.TemplateResponse(request, "analysis/partials/error.html", {
-            "error": str(e),
-        })
-    except RuntimeError as e:
-        return templates.TemplateResponse(request, "analysis/partials/error.html", {
-            "error": str(e),
-        })
+    from api.services.analysis_service import get_job_status
+    job         = get_job_status(job_id) or {}
+    result_meta = job.get("result") or {}
+    excel_name  = None
+    if result_meta.get("excel_path"):
+        excel_name = os.path.basename(result_meta["excel_path"])
+
+    run_msg = f"분석 완료 — {result_meta.get('saved', 0)}건 저장"
+    if excel_name:
+        run_msg += f" · 엑셀 저장됨 ({excel_name})"
+
+    return templates.TemplateResponse(request, "analysis/partials/table.html", {
+        "results":    results,
+        "market":     market,
+        "start":      start,
+        "end":        end,
+        "run_msg":    run_msg,
+        "excel_name": excel_name,
+    })
 
 
 def _quick_query_from_prices(db, start: str, end: str,

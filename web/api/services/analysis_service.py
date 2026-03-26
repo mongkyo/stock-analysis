@@ -37,6 +37,9 @@
 
 import sys
 import os
+import threading
+import uuid
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -50,6 +53,72 @@ _scripts_dir = os.path.abspath(
 )
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
+
+
+# ── 백그라운드 작업 관리 ────────────────────────────────────
+_jobs: dict = {}
+_jobs_lock = threading.Lock()
+
+
+def get_job_status(job_id: str) -> dict | None:
+    """job_id로 현재 진행 상태 조회"""
+    return _jobs.get(job_id)
+
+
+def start_analysis_job(start: str, end: str) -> str:
+    """백그라운드 스레드에서 분석 실행, job_id 반환
+
+    브라우저 탭을 닫아도 서버에서 분석은 계속 진행됨.
+    """
+    job_id = str(uuid.uuid4())[:8]
+
+    with _jobs_lock:
+        # 1시간 이상 된 완료 작업 정리
+        now = datetime.now()
+        expired = [jid for jid, j in _jobs.items()
+                   if (now - j["created_at"]) > timedelta(hours=1)]
+        for jid in expired:
+            del _jobs[jid]
+
+        _jobs[job_id] = {
+            "status":     "running",
+            "message":    "분석 준비 중...",
+            "percent":    0,
+            "result":     None,
+            "error":      None,
+            "created_at": datetime.now(),
+        }
+
+    def _run() -> None:
+        from api.database import SessionLocal
+        db = SessionLocal()
+        try:
+            def on_progress(msg: str, pct: int) -> None:
+                with _jobs_lock:
+                    if job_id in _jobs:
+                        _jobs[job_id]["message"] = msg
+                        _jobs[job_id]["percent"]  = pct
+
+            result = run_analysis(db, start, end, on_progress=on_progress)
+            with _jobs_lock:
+                _jobs[job_id].update({
+                    "status":  "done",
+                    "message": "분석 완료",
+                    "percent": 100,
+                    "result":  result,
+                })
+        except Exception as e:
+            with _jobs_lock:
+                _jobs[job_id].update({
+                    "status":  "error",
+                    "message": str(e),
+                    "error":   str(e),
+                })
+        finally:
+            db.close()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return job_id
 
 
 def _get_kis_client():
@@ -451,7 +520,7 @@ def _df_to_rows(df, market: str) -> list[dict]:
     return rows
 
 
-def run_analysis(db: Session, start: str, end: str) -> dict:
+def run_analysis(db: Session, start: str, end: str, on_progress=None) -> dict:
     """Top100 분석 실행 → DB 저장
 
     Args:
@@ -466,6 +535,11 @@ def run_analysis(db: Session, start: str, end: str) -> dict:
         ValueError: KIS 키 미설정
         RuntimeError: 분석 실패
     """
+    def _p(msg: str, pct: int) -> None:
+        if on_progress:
+            on_progress(msg, pct)
+        print(f"[진행 {pct}%] {msg}")
+
     # 날짜 형식 정규화 (YYYY-MM-DD → YYYYMMDD)
     start = start.replace("-", "")
     end   = end.replace("-", "")
@@ -474,27 +548,28 @@ def run_analysis(db: Session, start: str, end: str) -> dict:
     from report import create_excel_report
 
     # ── 누락 날짜 보완: DB에 없는 평일 날짜만 KIS API로 단독 fetch ──────
-    # 먼저 KIS 클라이언트 준비 (누락 날짜 있을 때만 실제 사용)
-    def _ensure_date(date_str: str) -> None:
-        """날짜가 StockPrice에 없으면 KIS API로 fetch하여 저장"""
+    def _ensure_date(date_str: str, label: str, pct: int) -> None:
         from sqlalchemy import func as _f
         cnt = (db.query(_f.count(StockPrice.code))
                .filter(StockPrice.date == date_str).scalar() or 0)
         if cnt < 2000:
+            _p(f"{label} 데이터 수집 중... (KIS API)", pct)
             client = _get_kis_client()
             _fetch_and_save_date(client, db, date_str)
+        else:
+            _p(f"{label} 데이터 확인 완료 (DB 캐시)", pct)
 
-    _ensure_date(start)
-    _ensure_date(end)
+    _ensure_date(start, "시작일", 5)
+    _ensure_date(end,   "종료일", 15)
 
     # ── 캐시 체크: StockPrice에 충분한 데이터가 있으면 KIS 가격 API 스킵 ──
+    _p("캐시 확인 중...", 25)
     actual_start, actual_end = _find_cache_dates(db, start, end)
     combined_df = kospi_df = kosdaq_df = None
     used_cache = False
 
     if actual_start and actual_end:
-        print(f"[캐시 모드] StockPrice DB 활용 "
-              f"(요청: {start}~{end} → 실제: {actual_start}~{actual_end})")
+        _p(f"DB 캐시로 수익률 계산 중... ({actual_start}~{actual_end})", 35)
         try:
             result = _run_from_cache(db, actual_start, actual_end)
             if result is not None:
@@ -504,12 +579,12 @@ def run_analysis(db: Session, start: str, end: str) -> dict:
             print(f"[캐시 실패] {e} — KIS API 모드로 전환")
 
     if not used_cache:
-        # 캐시 없거나 실패 → KIS API 직접 호출
-        print(f"[API 모드] KIS API 호출 ({start}~{end})")
+        _p("KIS API로 전 종목 수익률 조회 중...", 30)
         client = _get_kis_client()
         from top100 import get_combined_top100
         try:
-            combined_df, kospi_df, kosdaq_df = get_combined_top100(client, start, end)
+            combined_df, kospi_df, kosdaq_df = get_combined_top100(
+                client, start, end, on_progress=on_progress)
         except Exception as e:
             raise RuntimeError(f"KIS API 분석 실패: {e}") from e
 
@@ -517,19 +592,22 @@ def run_analysis(db: Session, start: str, end: str) -> dict:
         raise RuntimeError("분석 결과가 비어 있습니다. 날짜 범위를 확인하세요.")
 
     # ── 재진입 포착 ───────────────────────────────────────────
+    _p("재진입 종목 포착 중...", 90)
     prev_df = load_prev_combined()
     reentry_df = find_reentry_stocks(prev_df, combined_df) if not prev_df.empty else None
 
     # ── 엑셀 리포트 생성 → data/ 저장 ────────────────────────
+    _p("엑셀 리포트 생성 중...", 93)
     try:
         excel_path = create_excel_report(
             combined_df, kospi_df, kosdaq_df, reentry_df, start, end
         )
     except Exception as e:
-        excel_path = None  # 엑셀 실패해도 DB 저장은 계속 진행
+        excel_path = None
         print(f"[경고] 엑셀 생성 실패: {e}")
 
     # ── DB 저장 ───────────────────────────────────────────────
+    _p("DB 저장 중...", 97)
     total_saved = 0
     for df, market in [
         (combined_df, "통합"),

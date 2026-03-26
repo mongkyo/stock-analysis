@@ -202,7 +202,8 @@ def get_top100(client: KISClient,
 def get_combined_top100(client: KISClient,
                         start_date: str,
                         end_date: str,
-                        limit: Optional[int] = None) -> tuple[
+                        limit: Optional[int] = None,
+                        on_progress=None) -> tuple[
                             pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """코스피+코스닥 통합 Top100 및 각 시장 Top100 추출 (재무 데이터 포함)
 
@@ -221,7 +222,13 @@ def get_combined_top100(client: KISClient,
     Returns:
         (통합_top100, 코스피_top100, 코스닥_top100) — 재무 데이터 포함 DataFrame
     """
+    def _p(msg: str, pct: int) -> None:
+        if on_progress:
+            on_progress(msg, pct)
+
+    _p("코스피 수익률 조회 중...", 35)
     kospi_df = get_top100(client, start_date, end_date, "J", limit)
+    _p("코스닥 수익률 조회 중...", 55)
     kosdaq_df = get_top100(client, start_date, end_date, "Q", limit)
 
     # 통합: 두 시장 합산 후 수익률 내림차순 Top100
@@ -241,6 +248,7 @@ def get_combined_top100(client: KISClient,
             all_codes.update(df["종목코드"].tolist())
 
     unique_stocks = [{"종목코드": c, "종목명": ""} for c in all_codes]
+    _p("재무 데이터 조회 중...", 72)
     client.add_financial_data(unique_stocks)
 
     # 종목코드 → 재무 딕셔너리
@@ -265,9 +273,7 @@ def get_combined_top100(client: KISClient,
     kosdaq_df = _merge_fin(kosdaq_df)
 
     # ── 재무 필터 → 복합 점수 정렬 → TOP_N 최종 컷 ──────────
-    # 1) 마이너스 필터 (ROE_THRESHOLD, OP_MARGIN_THRESHOLD 기준)
-    # 2) 풀 내 백분위 기반 복합 점수 산정 (수익률60 + ROE25 + OPM15)
-    # 3) 복합 점수 내림차순 Top100 추출
+    _p("복합점수 계산 중...", 88)
     combined  = calculate_composite_score(
         filter_by_financials(combined)).head(TOP_N).reset_index(drop=True)
     kospi_df  = calculate_composite_score(
