@@ -31,11 +31,21 @@ jobs:
           sleep 1
           launchctl start com.stock.uvicorn
 
-      - name: 스케줄러 재시작
+      - name: 스케줄러 launchd 등록 및 재시작
         run: |
-          launchctl stop com.stock.scheduler || true
-          sleep 1
-          launchctl start com.stock.scheduler
+          mkdir -p ~/logs
+          PLIST=~/Library/LaunchAgents/com.stock.scheduler.plist
+          # 최초 1회: plist 복사 후 load
+          if ! launchctl list | grep -q com.stock.scheduler; then
+            cp /Users/mongkyo-server/Developer/stock-analysis/launchd/com.stock.scheduler.plist "$PLIST"
+            launchctl load "$PLIST"
+            echo "✅ 스케줄러 최초 등록 완료"
+          else
+            launchctl stop com.stock.scheduler || true
+            sleep 1
+            launchctl start com.stock.scheduler
+            echo "✅ 스케줄러 재시작 완료"
+          fi
 
       - name: 배포 완료 확인
         run: |
