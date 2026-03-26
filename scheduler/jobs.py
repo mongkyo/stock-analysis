@@ -3,20 +3,23 @@
 ──────────────────────────────────────────────────────
 역할:
   - 장중 30분 폴링: 관심종목 골든크로스 스캔 → 텔레그램 즉시 알림
-  - 매일 15:35 KST: 관심종목 당일 종가 DB 저장
+  - 매일 05:00 KST: 전 종목 재무데이터(ROE/영업이익률) DB 사전 저장
+  - 매일 15:35 KST: 전 종목 당일 종가 DB 저장
   - 매일 21:00 KST: Top100 분석 → 엑셀 리포트 → 텔레그램 발송
   - 스케줄러 시작/종료 관리
 
 스케줄 구성:
+  financial_job()   — 매일 05:00 KST 실행 (전 종목 ROE/영업이익률 사전 저장)
   scan_job()        — 평일 09:00~15:30 KST, 30분 간격 실행
   daily_price_job() — 평일 15:35 KST 실행 (장 마감 후 종가 저장)
   report_job()      — 매일 21:00 KST 실행 (당월 1일~오늘 기준)
 
 실행 예:
-  python scheduler/jobs.py          # 스케줄러 시작 (Ctrl+C로 종료)
+  python scheduler/jobs.py               # 스케줄러 시작 (Ctrl+C로 종료)
   python scheduler/jobs.py --now scan    # 스캔 즉시 1회 실행 (테스트)
   python scheduler/jobs.py --now price   # 종가 저장 즉시 1회 실행 (테스트)
   python scheduler/jobs.py --now report  # 리포트 즉시 1회 실행 (테스트)
+  python scheduler/jobs.py --now financial  # 재무 사전저장 즉시 1회 실행 (테스트)
 
 의존성:
   APScheduler (pip install apscheduler)
@@ -31,7 +34,8 @@
   2026-03-19  report_job()에 관심종목 수익률 조회 연결
               get_watchlist_performance() → create_excel_report(watchlist_df)
   2026-03-23  scan_job()에 GoldenCrossLog DB 저장 연결
-  2026-03-23  daily_price_job() 추가 — 평일 15:35 관심종목 종가 DB 저장
+  2026-03-23  daily_price_job() 추가 — 평일 15:35 전 종목 종가 DB 저장
+  2026-03-26  financial_job() 추가 — 매일 05:00 KST 전 종목 ROE/영업이익률 사전 저장
 ──────────────────────────────────────────────────────
 """
 
@@ -75,6 +79,10 @@ PRICE_SAVE_MINUTE = 35
 # 일일 리포트 시각
 REPORT_HOUR   = 21
 REPORT_MINUTE = 0
+
+# 재무 데이터 사전 저장 시각 (새벽 5시 — KIS API 트래픽 없는 시간대)
+FINANCIAL_HOUR   = 5
+FINANCIAL_MINUTE = 0
 
 # KIS 클라이언트 (전역 공유 — 토큰 재사용 목적)
 _client: KISClient | None = None
@@ -301,6 +309,93 @@ def daily_price_job() -> None:
         db.close()
 
 
+def financial_job() -> None:
+    """전 종목 재무데이터 사전 저장 작업 (매일 05:00 KST 실행)
+
+    코스피+코스닥 전 종목 ROE/영업이익률을 KIS API로 조회하여
+    stock_financials 테이블에 저장.
+    분석 실행 시 KIS 재무 API 재호출 없이 DB에서 즉시 조회 가능.
+    이미 오늘 날짜로 저장된 종목은 skip (중단 후 재시작 안전).
+    """
+    import time as _time
+
+    today_str = datetime.date.today().strftime("%Y%m%d")
+    print(f"\n[재무 사전저장] {today_str} 05:00 KST 시작")
+
+    try:
+        from api.database import SessionLocal
+        from api.models.stock import StockFinancial
+    except ImportError as e:
+        print(f"[재무 사전저장] import 실패: {e}")
+        return
+
+    client = _get_client()
+
+    # 전 종목 로드
+    try:
+        kospi  = client.download_stock_list("J")
+        kosdaq = client.download_stock_list("Q")
+        all_stocks = kospi + kosdaq
+        print(f"  전체 {len(all_stocks):,}개 종목 로드 완료")
+    except Exception as e:
+        print(f"[재무 사전저장] 종목 리스트 로드 실패: {e}")
+        return
+
+    db = SessionLocal()
+    try:
+        # 오늘 이미 저장된 코드 조회 (중단 재시작 시 중복 방지)
+        already = {
+            row.code for row in
+            db.query(StockFinancial.code)
+              .filter(StockFinancial.fetched_date == today_str).all()
+        }
+        print(f"  이미 저장됨: {len(already)}개 — skip 예정")
+
+        saved  = 0
+        errors = 0
+        batch: list[StockFinancial] = []
+
+        for i, item in enumerate(all_stocks, start=1):
+            code = item["종목코드"]
+            name = item["종목명"]
+
+            if code in already:
+                continue
+
+            _time.sleep(0.05)  # API 부하 분산
+            try:
+                fin = client.get_financial_data(code)
+                batch.append(StockFinancial(
+                    code=code, name=name,
+                    roe=fin["ROE"],
+                    op_margin=fin["영업이익률"],
+                    fetched_date=today_str,
+                ))
+                saved += 1
+            except Exception:
+                errors += 1
+
+            # 100개 단위 bulk insert
+            if len(batch) >= 100:
+                db.add_all(batch)
+                db.commit()
+                batch.clear()
+                if i % 500 == 0:
+                    print(f"  진행 중... {i:,}/{len(all_stocks):,} ({saved}건 저장)")
+
+        if batch:
+            db.add_all(batch)
+            db.commit()
+
+        print(f"[재무 사전저장] 완료 — {saved}건 저장, {errors}건 오류")
+
+    except Exception as e:
+        db.rollback()
+        print(f"[재무 사전저장 오류] {e}")
+    finally:
+        db.close()
+
+
 def report_job() -> None:
     """일일 Top100 리포트 작업 (매일 21:00 KST 실행)
 
@@ -356,6 +451,19 @@ def start_scheduler() -> None:
     """스케줄러 시작 (Ctrl+C로 종료)"""
     scheduler = BlockingScheduler(timezone=TZ)
 
+    # 매일 05:00 재무 사전저장
+    scheduler.add_job(
+        financial_job,
+        trigger=CronTrigger(
+            hour=FINANCIAL_HOUR,
+            minute=FINANCIAL_MINUTE,
+            timezone=TZ,
+        ),
+        id="financial_job",
+        name="재무 사전저장",
+        misfire_grace_time=600,  # 10분 내 지연 허용
+    )
+
     # 30분 간격 스캔 (매 시각 :00, :30)
     scheduler.add_job(
         scan_job,
@@ -399,6 +507,7 @@ def start_scheduler() -> None:
 
     print("=" * 50)
     print("스케줄러 시작")
+    print(f"  재무 사전저장:   매일 {FINANCIAL_HOUR:02d}:{FINANCIAL_MINUTE:02d} KST")
     print(f"  골든크로스 스캔: 평일 {SCAN_START_HOUR:02d}:00~"
           f"{SCAN_END_HOUR:02d}:{SCAN_END_MINUTE:02d}, "
           f"{SCAN_INTERVAL}분 간격")
@@ -420,8 +529,8 @@ def main():
     parser = argparse.ArgumentParser(description="APScheduler 자동화")
     parser.add_argument(
         "--now",
-        choices=["scan", "price", "report"],
-        help="즉시 1회 실행 (테스트용): scan | price | report",
+        choices=["scan", "price", "report", "financial"],
+        help="즉시 1회 실행 (테스트용): scan | price | report | financial",
     )
     args = parser.parse_args()
 
@@ -447,6 +556,11 @@ def main():
     if args.now == "report":
         print("[즉시 실행] 일일 리포트")
         report_job()
+        return
+
+    if args.now == "financial":
+        print("[즉시 실행] 재무 사전저장")
+        financial_job()
         return
 
     # 기본: 스케줄러 시작

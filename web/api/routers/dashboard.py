@@ -10,6 +10,7 @@
 수정 이력:
   2026-03-19  최초 작성
   2026-03-24  _recalc_scores() 추가 — 조회 시 현재 가중치로 종합점수 실시간 재계산
+  2026-03-26  _quick_query_from_prices() 재무 조회: StockFinancial DB 우선 (AnalysisResult 폴백)
 ──────────────────────────────────────────────────────
 """
 
@@ -23,7 +24,7 @@ from sqlalchemy.orm import Session
 from api.database import get_db
 from api.auth import get_current_user, require_role
 from api.models.user import User, UserRole
-from api.models.stock import AnalysisResult, GoldenCrossLog, StockPrice
+from api.models.stock import AnalysisResult, GoldenCrossLog, StockPrice, StockFinancial
 from sqlalchemy.orm import aliased
 from api.services.analysis_service import run_analysis
 
@@ -248,7 +249,7 @@ def _quick_query_from_prices(db, start: str, end: str,
 
     AnalysisResult가 없는 기간 조회 시 폴백으로 사용.
     - 가격:       StockPrice (start/end 날짜 근방 실제 매매일 자동 탐색)
-    - ROE/OPM:    해당 종목의 가장 최근 AnalysisResult 값 재사용
+    - ROE/OPM:    StockFinancial DB 우선, 없으면 AnalysisResult 이력 폴백
     - 시장 구분:  이전 AnalysisResult 이력에서 코드 → 시장 추론
 
     Returns:
@@ -293,21 +294,42 @@ def _quick_query_from_prices(db, start: str, end: str,
     if not rows:
         return None
 
-    # ── 이전 분석 이력에서 종목별 ROE/OPM + 시장 구분 ─────────
-    # 종목 코드 → (ROE, op_margin) : 가장 최신 AnalysisResult 값 재사용
-    fin_sq = (
+    # ── 종목별 ROE/OPM: StockFinancial 우선, 없으면 AnalysisResult 폴백 ──
+    # StockFinancial에서 각 코드의 가장 최근 저장값 조회
+    sf_sq = (
         db.query(
-            AnalysisResult.code,
-            AnalysisResult.roe,
-            AnalysisResult.op_margin,
+            StockFinancial.code,
+            StockFinancial.roe,
+            StockFinancial.op_margin,
             func.row_number().over(
-                partition_by=AnalysisResult.code,
-                order_by=AnalysisResult.end_date.desc()
+                partition_by=StockFinancial.code,
+                order_by=StockFinancial.fetched_date.desc()
             ).label("rn")
         ).subquery()
     )
-    fin_rows = db.query(fin_sq).filter(fin_sq.c.rn == 1).all()
-    fin_map  = {r.code: (r.roe, r.op_margin) for r in fin_rows}
+    sf_rows = db.query(sf_sq).filter(sf_sq.c.rn == 1).all()
+    fin_map: dict[str, tuple] = {r.code: (r.roe, r.op_margin) for r in sf_rows}
+
+    # StockFinancial에 없는 코드는 AnalysisResult 이력으로 보완
+    all_codes_set = {r["code"] for r in rows}
+    missing_codes = all_codes_set - set(fin_map.keys())
+    if missing_codes:
+        ar_sq = (
+            db.query(
+                AnalysisResult.code,
+                AnalysisResult.roe,
+                AnalysisResult.op_margin,
+                func.row_number().over(
+                    partition_by=AnalysisResult.code,
+                    order_by=AnalysisResult.end_date.desc()
+                ).label("rn")
+            )
+            .filter(AnalysisResult.code.in_(list(missing_codes)))
+            .subquery()
+        )
+        ar_rows = db.query(ar_sq).filter(ar_sq.c.rn == 1).all()
+        for r in ar_rows:
+            fin_map[r.code] = (r.roe, r.op_margin)
 
     # 종목 코드 → 시장 (코스피/코스닥): 어느 market 분석에 가장 많이 등장했는지
     mkt_rows = (

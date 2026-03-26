@@ -32,6 +32,7 @@
   2026-03-24  캐시 로직 추가 — StockPrice 데이터 충분 시 KIS 가격 API 0번 호출
               _find_cache_dates start 기준 변경: >= → <= (주말→이전 거래일)
               _fetch_and_save_date() 추가 — 누락 날짜 단독 fetch (시나리오 3)
+  2026-03-26  _run_from_cache() 재무 조회: KIS API → StockFinancial DB 우선 (폴백 유지)
 ──────────────────────────────────────────────────────
 """
 
@@ -45,7 +46,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from api.config import settings
-from api.models.stock import AnalysisResult, StockPrice
+from api.models.stock import AnalysisResult, StockPrice, StockFinancial
 
 # scripts/ 경로를 sys.path에 추가 (top100.py import용)
 _scripts_dir = os.path.abspath(
@@ -312,7 +313,7 @@ def _run_from_cache(db: Session,
     """StockPrice DB에서 수익률 계산 → 재무 API 조회 → Top100 반환
 
     KIS 가격 API(get_period_price)를 호출하지 않고 DB에 저장된 종가로 수익률 계산.
-    재무 데이터(ROE, 영업이익률)는 여전히 KIS 재무 API로 조회.
+    재무 데이터(ROE, 영업이익률)는 StockFinancial DB 우선 조회, 없으면 KIS API 폴백.
 
     Args:
         db:           DB 세션
@@ -388,16 +389,36 @@ def _run_from_cache(db: Session,
     kospi_df  = df_all[df_all["시장"] == "코스피"].head(FETCH_N).reset_index(drop=True)
     kosdaq_df = df_all[df_all["시장"] == "코스닥"].head(FETCH_N).reset_index(drop=True)
 
-    # 재무 데이터 일괄 조회 (중복 방지: 세 df 합집합)
+    # 재무 데이터 조회: StockFinancial DB 우선, 없으면 KIS API 폴백
     all_codes = (set(combined["종목코드"]) | set(kospi_df["종목코드"])
                  | set(kosdaq_df["종목코드"]))
-    unique_stocks = [{"종목코드": c, "종목명": ""} for c in all_codes]
-    client.add_financial_data(unique_stocks)
 
-    fin_map = {
-        s["종목코드"]: {"ROE": s["ROE"], "영업이익률": s["영업이익률"]}
-        for s in unique_stocks
-    }
+    # StockFinancial에서 각 코드의 가장 최근 데이터 조회
+    from sqlalchemy import func as _f
+    fin_sq = (
+        db.query(
+            StockFinancial.code,
+            StockFinancial.roe,
+            StockFinancial.op_margin,
+            _f.row_number().over(
+                partition_by=StockFinancial.code,
+                order_by=StockFinancial.fetched_date.desc()
+            ).label("rn"),
+        )
+        .filter(StockFinancial.code.in_(list(all_codes)))
+        .subquery()
+    )
+    fin_rows = db.query(fin_sq).filter(fin_sq.c.rn == 1).all()
+    fin_map = {r.code: {"ROE": r.roe, "영업이익률": r.op_margin} for r in fin_rows}
+
+    # DB에 없는 코드는 KIS API로 보완
+    missing = all_codes - set(fin_map.keys())
+    if missing:
+        print(f"[캐시] StockFinancial 미저장 {len(missing)}개 → KIS API 조회")
+        unique_stocks = [{"종목코드": c, "종목명": ""} for c in missing]
+        client.add_financial_data(unique_stocks)
+        for s in unique_stocks:
+            fin_map[s["종목코드"]] = {"ROE": s["ROE"], "영업이익률": s["영업이익률"]}
 
     def _merge_fin(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:

@@ -14,6 +14,7 @@
 수정 이력:
   2026-03-19  최초 작성
   2026-03-23  StockPrice 테이블 추가, AnalysisResult 가격 컬럼 제거
+  2026-03-26  StockFinancial 테이블 추가 — 전 종목 재무데이터 일별 사전 저장
 ──────────────────────────────────────────────────────
 """
 
@@ -70,6 +71,26 @@ class WatchlistItem(Base):
     added_at   : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="watchlist")
+
+
+class StockFinancial(Base):
+    """전 종목 재무데이터 — 매일 새벽 5시 사전 저장
+
+    financial_job()이 매일 새벽 5:00 KST에 전 종목 ROE/영업이익률을 저장.
+    분석 실행 시 KIS 재무 API 재호출 없이 이 테이블에서 즉시 조회.
+    (code, fetched_date) 유니크 — 날짜별 이력 보관.
+    """
+    __tablename__ = "stock_financials"
+    __table_args__ = (UniqueConstraint("code", "fetched_date",
+                                       name="uq_stock_financial_code_date"),)
+
+    id           : Mapped[int]             = mapped_column(primary_key=True)
+    code         : Mapped[str]             = mapped_column(String(6), index=True)
+    name         : Mapped[str]             = mapped_column(String(50))
+    roe          : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    op_margin    : Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fetched_date : Mapped[str]             = mapped_column(String(8), index=True)  # YYYYMMDD
+    created_at   : Mapped[datetime]        = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class GoldenCrossLog(Base):
