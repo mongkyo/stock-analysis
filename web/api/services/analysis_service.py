@@ -183,6 +183,18 @@ def _find_cache_dates(db: Session, start: str, end: str,
     return None, None
 
 
+def _bulk_insert_prices(db: Session, rows: list[dict]) -> None:
+    """StockPrice 배치 INSERT — 중복(code, date) 충돌 시 자동 skip"""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    stmt = (
+        pg_insert(StockPrice.__table__)
+        .values(rows)
+        .on_conflict_do_nothing(constraint="uq_stock_price_code_date")
+    )
+    db.execute(stmt)
+    db.commit()
+
+
 def _fetch_and_save_date(client, db: Session, date_str: str,
                          min_stocks: int = 2000) -> str | None:
     """특정 날짜의 전 종목 종가를 KIS API로 fetch → StockPrice 저장
@@ -267,20 +279,16 @@ def _fetch_and_save_date(client, db: Session, date_str: str,
             if actual_date is None:
                 actual_date = rec_date  # 첫 성공 종목의 날짜로 확정
 
-            batch.append(StockPrice(
-                code=code, name=name,
-                date=rec_date, close_price=close_price,
-            ))
+            batch.append({
+                "code":        code,
+                "name":        name,
+                "date":        rec_date,
+                "close_price": close_price,
+            })
 
-            # 100개 단위 bulk insert
+            # 100개 단위 bulk insert (ON CONFLICT DO NOTHING — 중복 자동 skip)
             if len(batch) >= 100:
-                try:
-                    db.bulk_save_objects(batch)
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    db.bulk_save_objects(batch)
-                    db.commit()
+                _bulk_insert_prices(db, batch)
                 batch = []
 
             if i % 500 == 0:
@@ -291,13 +299,7 @@ def _fetch_and_save_date(client, db: Session, date_str: str,
 
     # 남은 배치 저장
     if batch:
-        try:
-            db.bulk_save_objects(batch)
-            db.commit()
-        except Exception:
-            db.rollback()
-            db.bulk_save_objects(batch)
-            db.commit()
+        _bulk_insert_prices(db, batch)
 
     if actual_date:
         count = (db.query(func.count(StockPrice.code))
