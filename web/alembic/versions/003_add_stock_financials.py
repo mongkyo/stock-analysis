@@ -14,6 +14,12 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # 테이블이 이미 존재하면 건너뜀 (수동 생성된 경우 대비)
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    if 'stock_financials' in inspector.get_table_names():
+        return
+
     op.create_table(
         'stock_financials',
         sa.Column('id',           sa.Integer(),     nullable=False),
