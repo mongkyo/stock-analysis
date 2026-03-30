@@ -428,7 +428,7 @@ def analysis_result(
 
 
 @router.get("/reports", response_class=HTMLResponse)
-def reports_page(request: Request, user: User = Depends(require_role(UserRole.admin, UserRole.premium))):
+def reports_page(request: Request, user: User = Depends(require_role(UserRole.admin, UserRole.operator, UserRole.premium))):
     """리포트 목록 페이지"""
     files = sorted(
         glob.glob(os.path.join(DATA_DIR, "report_*.xlsx")),
@@ -442,7 +442,7 @@ def reports_page(request: Request, user: User = Depends(require_role(UserRole.ad
 
 
 @router.get("/reports/download/{filename}")
-def download_report(filename: str, user: User = Depends(require_role(UserRole.admin, UserRole.premium))):
+def download_report(filename: str, user: User = Depends(require_role(UserRole.admin, UserRole.operator, UserRole.premium))):
     """엑셀 리포트 다운로드"""
     # 경로 탈출 방지
     if ".." in filename or "/" in filename:

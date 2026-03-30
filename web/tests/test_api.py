@@ -202,3 +202,44 @@ class TestAnalysisAccess:
         resp = client.post("/analysis/run?start=2026-01-01&end=2026-01-31",
                            cookies=admin_cookies)
         assert resp.status_code != 403
+
+
+# ── 리포트 접근 제어 ──────────────────────────────────────
+class TestReportsAccess:
+    def test_reports_accessible_by_admin(self, client, admin_cookies):
+        """admin은 리포트 페이지 접근 가능"""
+        resp = client.get("/reports", cookies=admin_cookies)
+        assert resp.status_code == 200
+
+    def test_reports_accessible_by_operator(self, client, operator_cookies):
+        """operator는 리포트 페이지 접근 가능"""
+        resp = client.get("/reports", cookies=operator_cookies)
+        assert resp.status_code == 200
+
+    def test_reports_accessible_by_premium(self, client, db):
+        """premium 사용자도 리포트 페이지 접근 가능"""
+        from api.models.user import User, UserRole
+        from api.auth import hash_password, create_token
+        premium = User(
+            username="premium_report_test",
+            email="premium_report@test.com",
+            hashed_pw=hash_password("testpass"),
+            role=UserRole.premium,
+            is_active=True,
+        )
+        db.add(premium)
+        db.commit()
+        db.refresh(premium)
+        cookies = {"access_token": create_token({"sub": premium.username})}
+        resp = client.get("/reports", cookies=cookies)
+        assert resp.status_code == 200
+
+    def test_reports_forbidden_for_basic(self, client, basic_cookies):
+        """basic 사용자는 리포트 페이지 접근 불가 (403)"""
+        resp = client.get("/reports", cookies=basic_cookies)
+        assert resp.status_code == 403
+
+    def test_reports_unauthenticated_redirects(self, client):
+        """미인증 → /auth/login 리다이렉트"""
+        resp = client.get("/reports")
+        assert resp.status_code in (302, 303)
