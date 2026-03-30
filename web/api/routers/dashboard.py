@@ -181,9 +181,9 @@ def analysis_page(
 def analysis_run(
     start: str = Query(...),
     end:   str = Query(...),
-    user: User = Depends(require_role(UserRole.admin)),
+    user: User = Depends(require_role(UserRole.admin, UserRole.operator)),
 ):
-    """분석 백그라운드 시작 (admin 전용) → job_id 반환"""
+    """분석 백그라운드 시작 (admin, operator 전용) → job_id 반환"""
     from api.services.analysis_service import start_analysis_job
     job_id = start_analysis_job(start, end)
     return JSONResponse({"job_id": job_id})

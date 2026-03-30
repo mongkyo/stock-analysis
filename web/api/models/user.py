@@ -1,7 +1,7 @@
 """
 [web/api/models/user.py] 사용자 DB 모델
 ──────────────────────────────────────────────────────
-역할: User 테이블 정의 (권한: admin / premium / basic)
+역할: User 테이블 정의 (권한: admin / operator / premium / basic)
 컬럼:
   auth_provider — "local" | "google" | "kakao" (OAuth 확장 대비)
   hashed_pw     — 소셜 로그인 시 NULL 허용
@@ -21,9 +21,10 @@ import enum
 
 
 class UserRole(str, enum.Enum):
-    admin   = "admin"
-    premium = "premium"
-    basic   = "basic"
+    admin    = "admin"
+    operator = "operator"  # 분석 실행 가능 (회원 관리 제외)
+    premium  = "premium"
+    basic    = "basic"
 
 
 class AuthProvider(str, enum.Enum):

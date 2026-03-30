@@ -62,8 +62,8 @@
       class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-5 py-2 rounded-lg text-sm font-semibold transition"
     >조회</button>
 
-    <!-- 분석 실행 버튼 (admin 전용) -->
-    {% if user.role == 'admin' %}
+    <!-- 분석 실행 버튼 (admin, operator 전용) -->
+    {% if user.role in ('admin', 'operator') %}
     <button
       @click="runAnalysis()"
       :disabled="loading"
