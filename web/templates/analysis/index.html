@@ -15,8 +15,8 @@
     {% set presets = [
       ('당월', 'thisMonth'),
       ('1개월', 'lastMonth'),
-      ('3개월', '3month'),
-      ('6개월', '6month'),
+      ('3개월', 'threeMonth'),
+      ('6개월', 'sixMonth'),
       ('올해', 'thisYear'),
     ] %}
     {% for label, fn in presets %}
@@ -123,37 +123,41 @@ function dateBar() {
 
     init() { this.thisMonth(); },
 
+    // 로컬 날짜를 YYYY-MM-DD 문자열로 변환 (toISOString은 UTC 기준이라 KST에서 날짜 밀림)
+    fmt(d) {
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    },
+
     thisMonth() {
       const now = new Date();
       this.start = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
-      this.end   = now.toISOString().slice(0,10);
+      this.end   = this.fmt(now);
       this.preset = 'thisMonth';
     },
     lastMonth() {
       const now = new Date();
-      const d = new Date(now.getFullYear(), now.getMonth()-1, 1);
-      this.start = d.toISOString().slice(0,10);
-      this.end   = now.toISOString().slice(0,10);
+      this.start = this.fmt(new Date(now.getFullYear(), now.getMonth()-1, 1));
+      this.end   = this.fmt(now);
       this.preset = 'lastMonth';
     },
-    ['3month']() {
+    threeMonth() {
       const now = new Date();
       const d = new Date(now); d.setMonth(d.getMonth()-3);
-      this.start = d.toISOString().slice(0,10);
-      this.end   = now.toISOString().slice(0,10);
-      this.preset = '3month';
+      this.start = this.fmt(d);
+      this.end   = this.fmt(now);
+      this.preset = 'threeMonth';
     },
-    ['6month']() {
+    sixMonth() {
       const now = new Date();
       const d = new Date(now); d.setMonth(d.getMonth()-6);
-      this.start = d.toISOString().slice(0,10);
-      this.end   = now.toISOString().slice(0,10);
-      this.preset = '6month';
+      this.start = this.fmt(d);
+      this.end   = this.fmt(now);
+      this.preset = 'sixMonth';
     },
     thisYear() {
       const now = new Date();
       this.start = `${now.getFullYear()}-01-01`;
-      this.end   = now.toISOString().slice(0,10);
+      this.end   = this.fmt(now);
       this.preset = 'thisYear';
     },
 
