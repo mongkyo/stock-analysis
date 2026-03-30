@@ -179,6 +179,11 @@ class TestAnalysisAccess:
         resp = client.get("/analysis", cookies=basic_cookies)
         assert resp.status_code == 200
 
+    def test_analysis_page_accessible_by_operator(self, client, operator_cookies):
+        """operator도 분석 조회 페이지 접근 가능"""
+        resp = client.get("/analysis", cookies=operator_cookies)
+        assert resp.status_code == 200
+
     def test_analysis_run_forbidden_for_basic(self, client, basic_cookies):
         """basic 사용자는 분석 실행 불가 (403)"""
         resp = client.post("/analysis/run?start=2026-01-01&end=2026-01-31",

@@ -170,7 +170,7 @@ def dashboard(request: Request, db: Session = Depends(get_db),
 @router.get("/analysis", response_class=HTMLResponse)
 def analysis_page(
     request: Request,
-    user: User = Depends(require_role(UserRole.admin, UserRole.premium, UserRole.basic)),
+    user: User = Depends(require_role(UserRole.admin, UserRole.operator, UserRole.premium, UserRole.basic)),
 ):
     return templates.TemplateResponse(request, "analysis/index.html", {
         "user": user,
