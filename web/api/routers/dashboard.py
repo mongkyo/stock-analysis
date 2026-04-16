@@ -127,43 +127,53 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data")
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db),
               user: User = Depends(get_current_user)):
-    """메인 대시보드 — 요약 카드 + 최근 Top5 + 골든크로스 신호"""
-
-    # 가장 최근 분석 결과 기간 조회
-    latest = (db.query(AnalysisResult)
-              .filter(AnalysisResult.market == "통합")
-              .order_by(AnalysisResult.end_date.desc(),
-                        AnalysisResult.rank.asc())
-              .first())
-
-    top5 = []
-    summary = {}
-
-    if latest:
-        start_date = latest.start_date
-        end_date   = latest.end_date
-
-        top5 = _query_results_with_prices(db, start_date, end_date, "통합", limit=5)
-
-        summary = {
-            "start_date": f"{start_date[:4]}.{start_date[4:6]}.{start_date[6:]}",
-            "end_date":   f"{end_date[:4]}.{end_date[4:6]}.{end_date[6:]}",
-            "top1":       top5[0] if top5 else None,
-        }
-
-    # 오늘 골든크로스 신호
+    """메인 대시보드 — 오늘 골든크로스 신호"""
     from datetime import date
+    from sqlalchemy import func
+
     today = date.today().strftime("%Y-%m-%d")
     signals = (db.query(GoldenCrossLog)
                .filter(GoldenCrossLog.detected_at >= today)
                .order_by(GoldenCrossLog.detected_at.desc())
-               .limit(5).all())
+               .all())
+
+    # 신호 종목의 ROE/영업이익률 조회 (StockFinancial 최신값)
+    fin_map: dict[str, tuple] = {}
+    if signals:
+        codes = [s.code for s in signals]
+        sq = (
+            db.query(
+                StockFinancial.code,
+                StockFinancial.roe,
+                StockFinancial.op_margin,
+                func.row_number().over(
+                    partition_by=StockFinancial.code,
+                    order_by=StockFinancial.fetched_date.desc()
+                ).label("rn")
+            )
+            .filter(StockFinancial.code.in_(codes))
+            .subquery()
+        )
+        fin_map = {r.code: (r.roe, r.op_margin)
+                   for r in db.query(sq).filter(sq.c.rn == 1).all()}
+
+    signal_data = []
+    for s in signals:
+        roe, op_margin = fin_map.get(s.code, (None, None))
+        signal_data.append({
+            "code":        s.code,
+            "name":        s.name,
+            "close":       s.close,
+            "ma3":         s.ma3,
+            "ma5":         s.ma5,
+            "detected_at": s.detected_at,
+            "roe":         roe,
+            "op_margin":   op_margin,
+        })
 
     return templates.TemplateResponse(request, "dashboard/index.html", {
-        "user":     user,
-        "top5":     top5,
-        "summary":  summary,
-        "signals":  signals,
+        "user":    user,
+        "signals": signal_data,
     })
 
 
