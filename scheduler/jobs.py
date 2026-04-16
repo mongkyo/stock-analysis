@@ -56,7 +56,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from kis_api import KISClient
-from golden_cross import scan_watchlist
+from golden_cross import scan_all_stocks
 from top100 import (get_combined_top100, save_combined_csv,
                     load_prev_combined, find_reentry_stocks,
                     get_watchlist_performance)
@@ -66,11 +66,11 @@ from notifier import send_golden_cross_alert, send_daily_report
 # ── 설정 ──────────────────────────────────────────────────
 TZ = "Asia/Seoul"
 
-# 스캔 시간대: 평일 09:00~15:30, 30분 간격
+# 스캔 시간대: 평일 09:00~15:30, 2시간 간격 (09:00 / 11:00 / 13:00 / 15:00)
 SCAN_START_HOUR  = 9
 SCAN_END_HOUR    = 15
 SCAN_END_MINUTE  = 30
-SCAN_INTERVAL    = 30  # 분
+SCAN_HOURS       = "9,11,13,15"  # 실행 시각 (시 단위)
 
 # 종가 저장 시각 (장 마감 15:30 이후)
 PRICE_SAVE_HOUR   = 15
@@ -105,6 +105,8 @@ def _get_client() -> KISClient:
 
 def _save_golden_cross_logs(signals: list[dict], detected_at: datetime.datetime) -> None:
     """골든크로스 신호를 DB GoldenCrossLog 테이블에 저장"""
+    import json as _json
+
     try:
         from api.database import SessionLocal
         from api.models.stock import GoldenCrossLog
@@ -122,6 +124,10 @@ def _save_golden_cross_logs(signals: list[dict], detected_at: datetime.datetime)
             else:
                 signal_at = detected_at.strftime("%H%M%S")
 
+            # 거래량 추이 JSON 직렬화
+            vol_history = sig.get("volume_history") or []
+            vol_json = _json.dumps(vol_history) if vol_history else None
+
             log = GoldenCrossLog(
                 code=sig.get("종목코드", ""),
                 name=sig.get("종목명", ""),
@@ -129,6 +135,7 @@ def _save_golden_cross_logs(signals: list[dict], detected_at: datetime.datetime)
                 close=float(sig.get("close", 0) or 0),
                 ma3=float(sig.get("ma3", 0) or 0),
                 ma5=float(sig.get("ma5", 0) or 0),
+                volume_history=vol_json,
                 detected_at=detected_at,
             )
             db.add(log)
@@ -145,31 +152,19 @@ def _save_golden_cross_logs(signals: list[dict], detected_at: datetime.datetime)
 # ── 작업 함수 ──────────────────────────────────────────────
 
 def scan_job() -> None:
-    """골든크로스 스캔 작업 (30분 간격 실행)
+    """골든크로스 스캔 작업 (2시간 간격: 09:00 / 11:00 / 13:00 / 15:00)
 
-    평일 장 운영 시간(09:00~15:30)에만 실제 스캔을 수행합니다.
-    장 외 시간에 트리거되면 조용히 종료합니다.
+    코스피+코스닥 전 종목 대상으로 MA3/MA5 골든크로스 감지.
+    CronTrigger로 평일 지정 시각에만 실행되므로 시간 필터 불필요.
     """
     now = datetime.datetime.now(
         tz=datetime.timezone(datetime.timedelta(hours=9)))  # KST
 
-    # 주말 제외 (weekday: 0=월 ~ 4=금, 5=토, 6=일)
-    if now.weekday() >= 5:
-        return
-
-    # 장 운영 시간 외 제외
-    market_open  = now.replace(hour=SCAN_START_HOUR, minute=0,
-                                second=0, microsecond=0)
-    market_close = now.replace(hour=SCAN_END_HOUR, minute=SCAN_END_MINUTE,
-                                second=0, microsecond=0)
-    if not (market_open <= now <= market_close):
-        return
-
-    print(f"\n[스캔 작업] {now.strftime('%Y-%m-%d %H:%M')} KST 시작")
+    print(f"\n[스캔 작업] {now.strftime('%Y-%m-%d %H:%M')} KST 전 종목 스캔 시작")
 
     try:
         client  = _get_client()
-        signals = scan_watchlist(client)
+        signals = scan_all_stocks(client)
 
         if signals:
             send_golden_cross_alert(signals)
@@ -464,18 +459,18 @@ def start_scheduler() -> None:
         misfire_grace_time=600,  # 10분 내 지연 허용
     )
 
-    # 30분 간격 스캔 (매 시각 :00, :30)
+    # 2시간 간격 스캔 (09:00 / 11:00 / 13:00 / 15:00)
     scheduler.add_job(
         scan_job,
         trigger=CronTrigger(
             day_of_week="mon-fri",
-            hour=f"{SCAN_START_HOUR}-{SCAN_END_HOUR}",
-            minute=f"0/{SCAN_INTERVAL}",
+            hour=SCAN_HOURS,
+            minute=0,
             timezone=TZ,
         ),
         id="scan_job",
         name="골든크로스 스캔",
-        misfire_grace_time=60,   # 1분 내 지연 허용
+        misfire_grace_time=300,  # 5분 내 지연 허용
     )
 
     # 평일 15:35 종가 저장
@@ -508,9 +503,7 @@ def start_scheduler() -> None:
     print("=" * 50)
     print("스케줄러 시작")
     print(f"  재무 사전저장:   매일 {FINANCIAL_HOUR:02d}:{FINANCIAL_MINUTE:02d} KST")
-    print(f"  골든크로스 스캔: 평일 {SCAN_START_HOUR:02d}:00~"
-          f"{SCAN_END_HOUR:02d}:{SCAN_END_MINUTE:02d}, "
-          f"{SCAN_INTERVAL}분 간격")
+    print(f"  골든크로스 스캔: 평일 {SCAN_HOURS.replace(',', '/')}시 (전 종목, 2시간 간격)")
     print(f"  일일 종가 저장:  평일 {PRICE_SAVE_HOUR:02d}:{PRICE_SAVE_MINUTE:02d} KST")
     print(f"  일일 리포트:     매일 {REPORT_HOUR:02d}:{REPORT_MINUTE:02d} KST")
     print("  Ctrl+C로 종료")
@@ -540,12 +533,15 @@ def main():
         sys.exit(1)
 
     if args.now == "scan":
-        print("[즉시 실행] 골든크로스 스캔")
-        # 장 시간 제한 우회하여 바로 실행
+        print("[즉시 실행] 골든크로스 스캔 (전 종목)")
         client  = _get_client()
-        signals = scan_watchlist(client)
+        signals = scan_all_stocks(client)
         if signals:
             send_golden_cross_alert(signals)
+            _save_golden_cross_logs(
+                signals,
+                datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9)))
+            )
         return
 
     if args.now == "price":

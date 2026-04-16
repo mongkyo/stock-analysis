@@ -1,21 +1,15 @@
 """
-[golden_cross.py] 관심종목 골든크로스 감지 엔진
+[golden_cross.py] 골든크로스 감지 엔진
 ──────────────────────────────────────────────────────
 역할:
   - KIS API 30분봉 데이터 수집
   - MA3/MA5 골든크로스 신호 판단
-  - 관심종목(data/watchlist.json) 일괄 스캔
+  - 전 종목(코스피+코스닥) 또는 관심종목 일괄 스캔
   - 신호 발생 종목 결과 반환 (notifier.py에서 알림 발송)
 
 주요 함수:
-  load_watchlist()
-      → data/watchlist.json 에서 관심종목 리스트 반환
-  save_watchlist(watchlist)
-      → 관심종목 리스트를 JSON에 저장
-  add_to_watchlist(code, name)
-      → 관심종목 추가 (중복 방지)
-  remove_from_watchlist(code)
-      → 관심종목 삭제
+  load_watchlist() / save_watchlist() / add_to_watchlist() / remove_from_watchlist()
+      → 관심종목 관리 (data/watchlist.json)
 
   fetch_minute_ohlcv(client, code, interval, candles)
       → 분봉 OHLCV DataFrame 반환
@@ -23,8 +17,11 @@
   check_golden_cross(df)
       → {"signal": bool, "datetime", "close", "ma3", "ma5", "reason"}
 
+  scan_all_stocks(client)
+      → 코스피+코스닥 전 종목 스캔 → 신호 발생 종목 리스트 반환
+
   scan_watchlist(client)
-      → 관심종목 전체 스캔 → 신호 발생 종목 리스트 반환
+      → 관심종목 전체 스캔 → 신호 발생 종목 리스트 반환 (레거시)
 
 골든크로스 조건:
   이전 캔들: MA3 <= MA5
@@ -33,12 +30,13 @@
 설정값:
   MINUTE_INTERVAL = "30"   # 30분봉
   MINUTE_CANDLES  = 30     # 수집 캔들 수
+  VOLUME_HISTORY  = 10     # 저장할 거래량 캔들 수
 
 의존성: pandas, kis_api.py
 환경변수: KIS_APP_KEY, KIS_APP_SECRET (.env)
 
 실행 예:
-  python golden_cross.py                  # 관심종목 전체 스캔
+  python golden_cross.py                  # 전 종목 스캔
   python golden_cross.py --add 005930 삼성전자
   python golden_cross.py --remove 005930
 
@@ -46,6 +44,8 @@
   2026-03-19  최초 작성 — Phase 3
               stock-scanner/analysis_engine.py 기반 재구성
               관심종목 관리(CRUD) 및 스캔 로직 통합
+  2026-04-16  scan_all_stocks() 추가 — 전 종목 대상 스캔
+              거래량 추이(volume_history) 반환 추가
 ──────────────────────────────────────────────────────
 """
 
@@ -65,6 +65,7 @@ from kis_api import KISClient
 # ── 설정값 ────────────────────────────────────────────────
 MINUTE_INTERVAL = "30"   # 분봉 간격 (KIS API: "1","5","10","15","30","60")
 MINUTE_CANDLES  = 30     # 수집할 캔들 수 (MA5 계산에 최소 6개 필요)
+VOLUME_HISTORY  = 10     # 신호 발생 시 저장할 거래량 캔들 수
 
 WATCHLIST_PATH = os.path.join(
     os.path.dirname(__file__), "..", "data", "watchlist.json")
@@ -271,7 +272,70 @@ def check_golden_cross(df: pd.DataFrame) -> dict:
     return result
 
 
-# ── 관심종목 일괄 스캔 ─────────────────────────────────────
+# ── 전 종목 스캔 ───────────────────────────────────────────
+
+def scan_all_stocks(client: KISClient) -> list[dict]:
+    """코스피+코스닥 전 종목 골든크로스 스캔
+
+    Args:
+        client: KISClient 인스턴스
+
+    Returns:
+        신호 발생 종목 리스트:
+        [{"종목코드", "종목명", "signal", "datetime",
+          "close", "ma3", "ma5", "reason", "volume_history"}, ...]
+    """
+    try:
+        kospi  = client.download_stock_list("J")
+        kosdaq = client.download_stock_list("Q")
+        all_stocks = kospi + kosdaq
+    except Exception as e:
+        print(f"[전종목 스캔] 종목 리스트 로드 실패: {e}")
+        return []
+
+    total = len(all_stocks)
+    print(f"[스캔] 전 종목 {total:,}개 스캔 시작 ({MINUTE_INTERVAL}분봉 MA3/MA5)")
+
+    signals = []
+
+    for i, stock in enumerate(all_stocks, start=1):
+        code = stock["종목코드"]
+        name = stock["종목명"]
+        time.sleep(0.15)  # KIS API 부하 분산 (~6 req/초)
+
+        try:
+            df = fetch_minute_ohlcv(client, code)
+            if df.empty:
+                continue
+
+            result = check_golden_cross(df)
+
+            if result["signal"]:
+                # 최근 VOLUME_HISTORY개 캔들 거래량 추이
+                vol_history = (
+                    df["volume"].tail(VOLUME_HISTORY).tolist()
+                    if "volume" in df.columns else []
+                )
+                signals.append({
+                    "종목코드":       code,
+                    "종목명":         name,
+                    "volume_history": vol_history,
+                    **result,
+                })
+                print(f"  🚨 신호 {name}({code}): {result['reason']}")
+
+        except Exception as e:
+            print(f"  {name}({code}) 오류: {e}")
+            continue
+
+        if i % 500 == 0:
+            print(f"  진행 중... {i:,}/{total:,} (신호 {len(signals)}건)")
+
+    print(f"\n[스캔 완료] {total:,}개 종목 중 {len(signals)}개 골든크로스 신호")
+    return signals
+
+
+# ── 관심종목 일괄 스캔 (레거시) ────────────────────────────
 
 def scan_watchlist(client: KISClient) -> list[dict]:
     """관심종목 전체 골든크로스 스캔

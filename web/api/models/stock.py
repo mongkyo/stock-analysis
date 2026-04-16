@@ -20,7 +20,7 @@
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Float, DateTime, ForeignKey, Integer, UniqueConstraint
+from sqlalchemy import String, Float, DateTime, ForeignKey, Integer, UniqueConstraint, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from api.database import Base
 
@@ -97,11 +97,12 @@ class GoldenCrossLog(Base):
     """골든크로스 신호 이력"""
     __tablename__ = "golden_cross_logs"
 
-    id         : Mapped[int]           = mapped_column(primary_key=True)
-    code       : Mapped[str]           = mapped_column(String(6), index=True)
-    name       : Mapped[str]           = mapped_column(String(50))
-    signal_at  : Mapped[str]           = mapped_column(String(6))   # HHMMSS
-    close      : Mapped[float]         = mapped_column(Float)
-    ma3        : Mapped[float]         = mapped_column(Float)
-    ma5        : Mapped[float]         = mapped_column(Float)
-    detected_at: Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
+    id             : Mapped[int]            = mapped_column(primary_key=True)
+    code           : Mapped[str]            = mapped_column(String(6), index=True)
+    name           : Mapped[str]            = mapped_column(String(50))
+    signal_at      : Mapped[str]            = mapped_column(String(6))   # HHMMSS
+    close          : Mapped[float]          = mapped_column(Float)
+    ma3            : Mapped[float]          = mapped_column(Float)
+    ma5            : Mapped[float]          = mapped_column(Float)
+    volume_history : Mapped[Optional[str]]  = mapped_column(Text, nullable=True)  # JSON
+    detected_at    : Mapped[datetime]       = mapped_column(DateTime, default=datetime.utcnow)

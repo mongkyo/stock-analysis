@@ -23,6 +23,7 @@
         <th class="px-4 py-3 text-right">ROE</th>
         <th class="px-4 py-3 text-right">영업이익률</th>
         <th class="px-4 py-3 text-right">감지시각</th>
+        <th class="px-4 py-3 text-center">거래량 추이</th>
       </tr>
     </thead>
     <tbody class="divide-y divide-gray-50">
@@ -46,9 +47,25 @@
         <td class="px-4 py-3 text-right text-xs text-gray-400">
           {{ s.detected_at.strftime('%H:%M') }}
         </td>
+        <td class="px-4 py-3">
+          {% if s.vol_bars %}
+          <svg width="80" height="24" viewBox="0 0 80 24" class="mx-auto">
+            {% for h in s.vol_bars %}
+            <rect
+              x="{{ loop.index0 * 8 }}" y="{{ 24 - h }}"
+              width="7" height="{{ h if h > 0 else 1 }}"
+              fill="{% if loop.last %}#3B82F6{% else %}#93C5FD{% endif %}"
+              rx="1"
+            />
+            {% endfor %}
+          </svg>
+          {% else %}
+          <span class="block text-center text-gray-300 text-xs">—</span>
+          {% endif %}
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="px-4 py-10 text-center text-gray-400 text-sm">오늘 골든크로스 신호 없음</td></tr>
+      <tr><td colspan="8" class="px-4 py-10 text-center text-gray-400 text-sm">오늘 골든크로스 신호 없음</td></tr>
       {% endfor %}
     </tbody>
   </table>

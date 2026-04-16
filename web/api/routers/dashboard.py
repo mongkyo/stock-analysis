@@ -157,9 +157,22 @@ def dashboard(request: Request, db: Session = Depends(get_db),
         fin_map = {r.code: (r.roe, r.op_margin)
                    for r in db.query(sq).filter(sq.c.rn == 1).all()}
 
+    import json as _json
+
     signal_data = []
     for s in signals:
         roe, op_margin = fin_map.get(s.code, (None, None))
+
+        # 거래량 추이 파싱 → 스파크라인용 정규화 높이 계산
+        vol_bars: list[int] = []
+        try:
+            vols = _json.loads(s.volume_history) if s.volume_history else []
+            if vols:
+                max_v = max(vols) or 1
+                vol_bars = [round(v / max_v * 20) for v in vols]
+        except Exception:
+            vol_bars = []
+
         signal_data.append({
             "code":        s.code,
             "name":        s.name,
@@ -169,6 +182,7 @@ def dashboard(request: Request, db: Session = Depends(get_db),
             "detected_at": s.detected_at,
             "roe":         roe,
             "op_margin":   op_margin,
+            "vol_bars":    vol_bars,
         })
 
     return templates.TemplateResponse(request, "dashboard/index.html", {
