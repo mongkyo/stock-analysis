@@ -203,9 +203,12 @@ def dashboard(request: Request, db: Session = Depends(get_db),
             "op_margin":   op_margin,
         })
 
-    # 등락률 높은 순 정렬
+    # 최근 감지시각 순 → 같은 시각 내 등락률 높은 순 정렬
     signal_data.sort(
-        key=lambda x: x["change_rate"] if x["change_rate"] is not None else -999,
+        key=lambda x: (
+            x["detected_at"],
+            x["change_rate"] if x["change_rate"] is not None else -999,
+        ),
         reverse=True
     )
 
