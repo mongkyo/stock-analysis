@@ -157,11 +157,41 @@ def dashboard(request: Request, db: Session = Depends(get_db),
         fin_map = {r.code: (r.roe, r.op_margin)
                    for r in db.query(sq).filter(sq.c.rn == 1).all()}
 
+    # 전일 종가 조회 → 등락률 계산
+    prev_price_map: dict[str, float] = {}
+    if signals:
+        today_str = date.today().strftime("%Y%m%d")
+        codes = [s.code for s in signals]
+        prev_sq = (
+            db.query(
+                StockPrice.code,
+                StockPrice.close_price,
+                func.row_number().over(
+                    partition_by=StockPrice.code,
+                    order_by=StockPrice.date.desc()
+                ).label("rn")
+            )
+            .filter(StockPrice.code.in_(codes),
+                    StockPrice.date < today_str)
+            .subquery()
+        )
+        prev_price_map = {
+            r.code: float(r.close_price)
+            for r in db.query(prev_sq).filter(prev_sq.c.rn == 1).all()
+        }
+
     import json as _json
 
     signal_data = []
     for s in signals:
         roe, op_margin = fin_map.get(s.code, (None, None))
+
+        # 등락률 계산
+        prev_close = prev_price_map.get(s.code)
+        change_rate = (
+            round((s.close - prev_close) / prev_close * 100, 2)
+            if prev_close else None
+        )
 
         # 거래량 추이 파싱 → 스파크라인용 정규화 높이 계산
         vol_bars: list[int] = []
@@ -177,6 +207,7 @@ def dashboard(request: Request, db: Session = Depends(get_db),
             "code":        s.code,
             "name":        s.name,
             "close":       s.close,
+            "change_rate": change_rate,
             "ma3":         s.ma3,
             "ma5":         s.ma5,
             "detected_at": s.detected_at,
@@ -184,6 +215,12 @@ def dashboard(request: Request, db: Session = Depends(get_db),
             "op_margin":   op_margin,
             "vol_bars":    vol_bars,
         })
+
+    # 등락률 높은 순 정렬
+    signal_data.sort(
+        key=lambda x: x["change_rate"] if x["change_rate"] is not None else -999,
+        reverse=True
+    )
 
     return templates.TemplateResponse(request, "dashboard/index.html", {
         "user":    user,

@@ -32,6 +32,7 @@
       <tr>
         <th class="px-4 py-3 text-left">종목명</th>
         <th class="px-4 py-3 text-right">현재가</th>
+        <th class="px-4 py-3 text-right">등락률</th>
         <th class="px-4 py-3 text-right">MA3</th>
         <th class="px-4 py-3 text-right">MA5</th>
         <th class="px-4 py-3 text-right">ROE</th>
@@ -49,6 +50,15 @@
         </td>
         <td class="px-4 py-3 text-right font-semibold text-red-500">
           {{ "{:,.0f}".format(s.close) }}
+        </td>
+        <td class="px-4 py-3 text-right font-semibold">
+          {% if s.change_rate is not none %}
+            <span class="{{ 'text-red-500' if s.change_rate >= 0 else 'text-blue-500' }}">
+              {{ '+' if s.change_rate >= 0 else '' }}{{ "%.2f"|format(s.change_rate) }}%
+            </span>
+          {% else %}
+            <span class="text-gray-300">—</span>
+          {% endif %}
         </td>
         <td class="px-4 py-3 text-right text-gray-600">{{ "{:,.0f}".format(s.ma3) }}</td>
         <td class="px-4 py-3 text-right text-gray-600">{{ "{:,.0f}".format(s.ma5) }}</td>
@@ -79,7 +89,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="px-4 py-10 text-center text-gray-400 text-sm">오늘 골든크로스 신호 없음</td></tr>
+      <tr><td colspan="9" class="px-4 py-10 text-center text-gray-400 text-sm">오늘 골든크로스 신호 없음</td></tr>
       {% endfor %}
     </tbody>
   </table>
