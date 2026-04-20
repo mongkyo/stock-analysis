@@ -6,12 +6,26 @@
 
 <!-- 골든크로스 신호 -->
 <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-  <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-    <div class="flex items-center gap-2">
+  <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
+    <div class="flex items-center gap-2 shrink-0">
       <h2 class="font-semibold text-gray-800">⚡ 오늘 골든크로스 신호</h2>
-      <span class="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">{{ signals|length }}건</span>
+      <span id="signal-count" class="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">{{ signals|length }}건</span>
     </div>
-    <span class="text-xs text-gray-400">MA3 / MA5 상향돌파</span>
+    <div class="flex items-center gap-3 flex-1 justify-end">
+      <div class="relative">
+        <svg class="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"/>
+        </svg>
+        <input
+          id="signal-search"
+          type="text"
+          placeholder="종목명 검색"
+          class="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 w-44"
+          oninput="filterSignals(this.value)"
+        />
+      </div>
+      <span class="text-xs text-gray-400 shrink-0">MA3 / MA5 상향돌파</span>
+    </div>
   </div>
   <table class="w-full text-sm">
     <thead class="bg-gray-50 text-gray-500 text-xs">
@@ -28,7 +42,7 @@
     </thead>
     <tbody class="divide-y divide-gray-50">
       {% for s in signals %}
-      <tr class="hover:bg-gray-50">
+      <tr class="hover:bg-gray-50 signal-row" data-name="{{ s.name }} {{ s.code }}">
         <td class="px-4 py-3">
           <div class="font-medium">{{ s.name }}</div>
           <div class="text-xs text-gray-400">{{ s.code }}</div>
@@ -71,4 +85,22 @@
   </table>
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterSignals(query) {
+  const q = query.trim().toLowerCase();
+  const rows = document.querySelectorAll('.signal-row');
+  let visible = 0;
+
+  rows.forEach(row => {
+    const match = !q || row.dataset.name.toLowerCase().includes(q);
+    row.style.display = match ? '' : 'none';
+    if (match) visible++;
+  });
+
+  document.getElementById('signal-count').textContent = visible + '건';
+}
+</script>
 {% endblock %}
