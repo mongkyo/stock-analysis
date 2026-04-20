@@ -6,12 +6,16 @@
 
 <!-- 골든크로스 신호 -->
 <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-  <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
-    <div class="flex items-center gap-2 shrink-0">
-      <h2 class="font-semibold text-gray-800">⚡ 오늘 골든크로스 신호</h2>
-      <span id="signal-count" class="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">{{ signals|length }}건</span>
-    </div>
-    <div class="flex items-center gap-3 flex-1 justify-end">
+
+  <!-- 헤더 -->
+  <div class="px-6 py-4 border-b border-gray-100">
+    <div class="flex items-center justify-between gap-4 flex-wrap">
+      <!-- 타이틀 + 건수 -->
+      <div class="flex items-center gap-2 shrink-0">
+        <h2 class="font-semibold text-gray-800">⚡ 오늘 골든크로스 신호</h2>
+        <span id="signal-count" class="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">{{ signals|length }}건</span>
+      </div>
+      <!-- 검색 -->
       <div class="relative">
         <svg class="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"/>
@@ -21,12 +25,22 @@
           type="text"
           placeholder="종목명 검색"
           class="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 w-44"
-          oninput="filterSignals(this.value)"
+          oninput="applyFilter()"
         />
       </div>
-      <span class="text-xs text-gray-400 shrink-0">MA3 / MA5 상향돌파</span>
+    </div>
+
+    <!-- 감지시각 필터 버튼 -->
+    <div id="time-filter" class="flex items-center gap-2 mt-3 flex-wrap">
+      <span class="text-xs text-gray-400 shrink-0">감지시각</span>
+      <button
+        class="time-btn active text-xs px-3 py-1 rounded-full border border-blue-400 bg-blue-400 text-white"
+        data-time="all"
+        onclick="setTimeFilter(this)"
+      >전체</button>
     </div>
   </div>
+
   <table class="w-full text-sm">
     <thead class="bg-gray-50 text-gray-500 text-xs">
       <tr>
@@ -38,12 +52,13 @@
         <th class="px-4 py-3 text-right">ROE</th>
         <th class="px-4 py-3 text-right">영업이익률</th>
         <th class="px-4 py-3 text-right">감지시각</th>
-        <th class="px-4 py-3 text-center">거래량 추이</th>
       </tr>
     </thead>
     <tbody class="divide-y divide-gray-50">
       {% for s in signals %}
-      <tr class="hover:bg-gray-50 signal-row" data-name="{{ s.name }} {{ s.code }}">
+      <tr class="hover:bg-gray-50 signal-row"
+          data-name="{{ s.name }} {{ s.code }}"
+          data-time="{{ s.detected_at.strftime('%H:%M') }}">
         <td class="px-4 py-3">
           <div class="font-medium">{{ s.name }}</div>
           <div class="text-xs text-gray-400">{{ s.code }}</div>
@@ -71,25 +86,9 @@
         <td class="px-4 py-3 text-right text-xs text-gray-400">
           {{ s.detected_at.strftime('%H:%M') }}
         </td>
-        <td class="px-4 py-3">
-          {% if s.vol_bars %}
-          <svg width="80" height="24" viewBox="0 0 80 24" class="mx-auto">
-            {% for h in s.vol_bars %}
-            <rect
-              x="{{ loop.index0 * 8 }}" y="{{ 24 - h }}"
-              width="7" height="{{ h if h > 0 else 1 }}"
-              fill="{% if loop.last %}#3B82F6{% else %}#93C5FD{% endif %}"
-              rx="1"
-            />
-            {% endfor %}
-          </svg>
-          {% else %}
-          <span class="block text-center text-gray-300 text-xs">—</span>
-          {% endif %}
-        </td>
       </tr>
       {% else %}
-      <tr><td colspan="9" class="px-4 py-10 text-center text-gray-400 text-sm">오늘 골든크로스 신호 없음</td></tr>
+      <tr><td colspan="8" class="px-4 py-10 text-center text-gray-400 text-sm">오늘 골든크로스 신호 없음</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -99,18 +98,50 @@
 
 {% block scripts %}
 <script>
-function filterSignals(query) {
-  const q = query.trim().toLowerCase();
-  const rows = document.querySelectorAll('.signal-row');
-  let visible = 0;
+  let activeTime = 'all';
 
-  rows.forEach(row => {
-    const match = !q || row.dataset.name.toLowerCase().includes(q);
-    row.style.display = match ? '' : 'none';
-    if (match) visible++;
+  // 페이지 로드 시 고유 감지시각 버튼 동적 생성
+  document.addEventListener('DOMContentLoaded', () => {
+    const times = [...new Set(
+      [...document.querySelectorAll('.signal-row')].map(r => r.dataset.time)
+    )].sort();
+
+    const container = document.getElementById('time-filter');
+    times.forEach(t => {
+      const btn = document.createElement('button');
+      btn.className = 'time-btn text-xs px-3 py-1 rounded-full border border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-500';
+      btn.dataset.time = t;
+      btn.textContent = t;
+      btn.onclick = () => setTimeFilter(btn);
+      container.appendChild(btn);
+    });
   });
 
-  document.getElementById('signal-count').textContent = visible + '건';
-}
+  function setTimeFilter(btn) {
+    activeTime = btn.dataset.time;
+    document.querySelectorAll('.time-btn').forEach(b => {
+      const on = b === btn;
+      b.className = on
+        ? 'time-btn active text-xs px-3 py-1 rounded-full border border-blue-400 bg-blue-400 text-white'
+        : 'time-btn text-xs px-3 py-1 rounded-full border border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-500';
+    });
+    applyFilter();
+  }
+
+  function applyFilter() {
+    const q = document.getElementById('signal-search').value.trim().toLowerCase();
+    const rows = document.querySelectorAll('.signal-row');
+    let visible = 0;
+
+    rows.forEach(row => {
+      const nameMatch = !q || row.dataset.name.toLowerCase().includes(q);
+      const timeMatch = activeTime === 'all' || row.dataset.time === activeTime;
+      const show = nameMatch && timeMatch;
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+
+    document.getElementById('signal-count').textContent = visible + '건';
+  }
 </script>
 {% endblock %}
